@@ -1,0 +1,39 @@
+# Oracle到Doris数据迁移系统配置 - 测试版本
+
+database:
+  doris:
+    host: "localhost"
+    port: 9030
+    user: "root"
+    password: ""
+    database: "test_migration_db"
+    charset: "utf8mb4"
+    
+deepseek:
+  api_key: "your_deepseek_api_key_here"  # 请替换为真实的API密钥
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-reasoner"
+  max_tokens: 4000
+  temperature: 0.1
+  timeout: 30
+  
+web_interface:
+  host: "0.0.0.0"
+  port: 5000
+  debug: true  # 测试模式开启调试
+  secret_key: "test_secret_key_12345"
+  
+migration:
+  sample_lines: 50  # 测试时使用较少样本行
+  chunk_size_mb: 10  # 测试时使用较小块
+  max_workers: 4  # 测试时使用较少工作线程
+  batch_size: 100  # 测试时使用较小批次
+  retry_count: 2  # 测试时减少重试次数
+  enable_user_confirmation: true
+  temp_dir: "./temp"
+  
+logging:
+  level: "DEBUG"  # 测试时开启详细日志
+  file: "test_migration.log"
+  max_size_mb: 50
+  backup_count: 3

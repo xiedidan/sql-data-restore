@@ -1,0 +1,51 @@
+# Oracle到Doris数据迁移系统配置示例
+# 请复制此文件为 config.yaml 并根据实际环境修改配置
+
+# 数据库连接配置
+database:
+  doris:
+    host: "localhost"                    # Doris FE节点地址
+    port: 9030                          # Doris查询端口
+    user: "root"                        # 数据库用户名
+    password: ""                        # 数据库密码
+    database: "migration_db"            # 目标数据库名
+    charset: "utf8mb4"                  # 字符集
+
+# DeepSeek AI配置
+deepseek:
+  api_key: "your_deepseek_api_key_here"  # 在这里填入你的DeepSeek API密钥
+  base_url: "https://api.deepseek.com"   # API基础URL
+  model: "deepseek-reasoner"             # 使用的模型名称
+  max_tokens: 4000                       # 最大输出令牌数
+  temperature: 0.1                       # 温度参数（0-1，越低越确定）
+  timeout: 30                           # API调用超时时间（秒）
+
+# Web界面配置
+web_interface:
+  host: "0.0.0.0"                       # 监听地址（0.0.0.0表示监听所有网卡）
+  port: 5000                            # 监听端口
+  debug: false                          # 是否开启调试模式
+  secret_key: "your_secret_key_here"    # Flask密钥，请使用随机字符串
+
+# 迁移配置
+migration:
+  sample_lines: 100                     # 提取样本数据的行数
+  chunk_size_mb: 30                     # 文件分块大小（MB）
+  max_workers: 8                        # 最大并发工作线程数
+  batch_size: 1000                      # 批处理大小
+  retry_count: 3                        # 失败重试次数
+  enable_user_confirmation: true        # 是否启用用户确认DDL
+  temp_dir: "./temp"                    # 临时文件目录
+
+# 日志配置
+logging:
+  level: "INFO"                         # 日志级别：DEBUG, INFO, WARNING, ERROR
+  file: "migration.log"                 # 日志文件名
+  max_size_mb: 100                      # 日志文件最大大小（MB）
+  backup_count: 5                       # 保留的备份文件数量
+
+# 性能调优建议：
+# 1. 根据服务器CPU核心数调整 max_workers（推荐：核心数 * 2）
+# 2. 根据可用内存调整 chunk_size_mb（推荐：总内存的5-10%）
+# 3. 根据网络延迟调整 batch_size（高延迟环境使用更大批次）
+# 4. 在生产环境中关闭debug模式并设置适当的日志级别

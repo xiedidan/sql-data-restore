@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oracle到Doris数据迁移工具</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div id="app">
+        <!-- 头部 -->
+        <header class="header">
+            <div class="container">
+                <h1><i class="fas fa-database"></i> Oracle到Doris迁移工具</h1>
+                <div class="connection-status">
+                    <span id="connection-indicator" class="status-indicator offline">
+                        <i class="fas fa-circle"></i> 离线
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <div class="container">
+                <!-- 左侧面板 -->
+                <aside class="sidebar">
+                    <!-- 文件上传区域 -->
+                    <div class="upload-section">
+                        <h3><i class="fas fa-upload"></i> 文件上传</h3>
+                        <div class="upload-area" id="upload-area">
+                            <div class="upload-placeholder">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>拖拽SQL文件到此处或点击选择</p>
+                                <input type="file" id="file-input" accept=".sql" style="display: none;">
+                                <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">
+                                    选择文件
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 任务列表 -->
+                    <div class="task-section">
+                        <h3><i class="fas fa-tasks"></i> 任务列表</h3>
+                        <div class="task-list" id="task-list">
+                            <div class="empty-state">
+                                <i class="fas fa-inbox"></i>
+                                <p>暂无任务</p>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- 主内容区域 -->
+                <div class="main-panel">
+                    <!-- DDL编辑器 -->
+                    <div class="ddl-section" id="ddl-section" style="display: none;">
+                        <div class="section-header">
+                            <h3><i class="fas fa-code"></i> DDL语句确认</h3>
+                            <div class="ddl-actions">
+                                <button class="btn btn-secondary" id="validate-ddl">
+                                    <i class="fas fa-check-circle"></i> 验证语法
+                                </button>
+                                <button class="btn btn-success" id="confirm-ddl">
+                                    <i class="fas fa-check"></i> 确认并执行
+                                </button>
+                                <button class="btn btn-warning" id="modify-ddl">
+                                    <i class="fas fa-edit"></i> 修改
+                                </button>
+                            </div>
+                        </div>
+                        <div class="ddl-editor-container">
+                            <div class="table-info" id="table-info">
+                                <div class="info-item">
+                                    <span class="label">表名:</span>
+                                    <span class="value" id="table-name">-</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="label">推断置信度:</span>
+                                    <span class="value" id="confidence-score">-</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="label">估计行数:</span>
+                                    <span class="value" id="estimated-rows">-</span>
+                                </div>
+                            </div>
+                            <textarea id="ddl-editor" class="ddl-editor" placeholder="AI推断的DDL语句将显示在此处..."></textarea>
+                        </div>
+                    </div>
+
+                    <!-- 进度监控 -->
+                    <div class="progress-section" id="progress-section" style="display: none;">
+                        <div class="section-header">
+                            <h3><i class="fas fa-chart-line"></i> 导入进度</h3>
+                            <div class="progress-actions">
+                                <button class="btn btn-danger" id="cancel-import" style="display: none;">
+                                    <i class="fas fa-stop"></i> 取消导入
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="progress-overview">
+                            <div class="progress-item">
+                                <span class="label">当前状态:</span>
+                                <span class="value" id="current-status">准备中</span>
+                            </div>
+                            <div class="progress-item">
+                                <span class="label">总体进度:</span>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" id="overall-progress"></div>
+                                    </div>
+                                    <span class="progress-text" id="overall-progress-text">0%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="import-stats" id="import-stats">
+                            <div class="stat-item">
+                                <div class="stat-value" id="completed-tasks">0</div>
+                                <div class="stat-label">已完成任务</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="failed-tasks">0</div>
+                                <div class="stat-label">失败任务</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="imported-rows">0</div>
+                                <div class="stat-label">已导入行数</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="execution-time">0s</div>
+                                <div class="stat-label">执行时间</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 日志面板 -->
+                    <div class="log-section">
+                        <div class="section-header">
+                            <h3><i class="fas fa-terminal"></i> 系统日志</h3>
+                            <div class="log-actions">
+                                <button class="btn btn-secondary" id="clear-logs">
+                                    <i class="fas fa-trash"></i> 清空日志
+                                </button>
+                            </div>
+                        </div>
+                        <div class="log-container">
+                            <div class="log-output" id="log-output">
+                                <div class="log-entry info">
+                                    <span class="timestamp">[系统启动]</span>
+                                    <span class="message">Oracle到Doris迁移工具已就绪</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- 状态弹窗 -->
+        <div class="modal" id="status-modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 id="modal-title">系统消息</h4>
+                    <span class="close" onclick="closeModal()">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <p id="modal-message"></p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" onclick="closeModal()">确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
