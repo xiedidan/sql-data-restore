@@ -166,18 +166,25 @@ def check_environment():
     
     # 检查依赖库
     required_packages = [
-        'flask', 'flask_socketio', 'pymysql', 'requests', 
-        'pyyaml', 'pandas'
+        ('flask', 'flask'), 
+        ('flask_socketio', 'flask_socketio'), 
+        ('pymysql', 'pymysql'), 
+        ('requests', 'requests'), 
+        ('yaml', 'pyyaml'),  # yaml是pyyaml的导入名
+        ('pandas', 'pandas')
     ]
     
     missing_packages = []
-    for package in required_packages:
+    for import_name, package_name in required_packages:
         try:
-            __import__(package)
-            print(f"✅ {package}")
-        except ImportError:
-            print(f"❌ {package} (未安装)")
-            missing_packages.append(package)
+            __import__(import_name)
+            print(f"✅ {package_name}")
+        except ImportError as e:
+            print(f"❌ {package_name} (未安装)")
+            missing_packages.append(package_name)
+        except Exception as e:
+            print(f"⚠️  {package_name} (导入异常: {str(e)[:50]}...)")
+            # 对于导入异常，我们认为包已安装但有问题，不算作缺失
     
     if missing_packages:
         print(f"\n⚠️  请安装缺失的依赖:")
