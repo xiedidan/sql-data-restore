@@ -23,16 +23,63 @@ class MigrationApp {
     
     // SocketIO初始化
     initSocketIO() {
-        this.socket = io();
+        // 配置SocketIO选项
+        const socketOptions = {
+            transports: ['polling', 'websocket'],  // 允许多种传输方式
+            upgrade: true,                         // 允许升级到WebSocket
+            timeout: 60000,                       // 连接超时：60秒
+            forceNew: true,                       // 强制创建新连接
+            reconnection: true,                   // 允许自动重连
+            reconnectionDelay: 1000,              // 重连延迟：1秒
+            reconnectionDelayMax: 5000,           // 最大重连延迟：5秒
+            maxReconnectionAttempts: 10,          // 最大重连次数
+            randomizationFactor: 0.5              // 重连随机化因子
+        };
+        
+        this.socket = io(socketOptions);
+        
+        // 心跳保持
+        this.heartbeatInterval = setInterval(() => {
+            if (this.socket.connected) {
+                this.socket.emit('heartbeat', {
+                    timestamp: Date.now(),
+                    client_id: this.socket.id
+                });
+            }
+        }, 30000);  // 每30秒发送一次心跳
         
         this.socket.on('connect', () => {
             this.updateConnectionStatus(true);
             this.log('连接到服务器成功', 'success');
         });
         
-        this.socket.on('disconnect', () => {
+        this.socket.on('disconnect', (reason) => {
             this.updateConnectionStatus(false);
-            this.log('服务器连接断开', 'warning');
+            this.log(`服务器连接断开: ${reason}`, 'warning');
+            
+            // 清理心跳定时器
+            if (this.heartbeatInterval) {
+                clearInterval(this.heartbeatInterval);
+            }
+        });
+        
+        this.socket.on('reconnect', (attemptNumber) => {
+            this.updateConnectionStatus(true);
+            this.log(`重新连接成功 (第${attemptNumber}次尝试)`, 'success');
+            this.loadTasks(); // 重连后重新加载任务
+        });
+        
+        this.socket.on('reconnect_attempt', (attemptNumber) => {
+            this.log(`正在尝试重新连接... (第${attemptNumber}次)`, 'info');
+        });
+        
+        this.socket.on('reconnect_error', (error) => {
+            this.log(`重连失败: ${error.message}`, 'error');
+        });
+        
+        this.socket.on('heartbeat_response', (data) => {
+            // 心跳响应，用于检查连接状态
+            console.log('Heartbeat response:', data);
         });
         
         this.socket.on('task_started', (data) => {
@@ -69,6 +116,10 @@ class MigrationApp {
         
         this.socket.on('parsing_progress', (data) => {
             this.handleParsingProgress(data);
+        });
+        
+        this.socket.on('inference_progress', (data) => {
+            this.handleInferenceProgress(data);
         });
         
         this.socket.on('task_cancelled', (data) => {
@@ -774,7 +825,48 @@ class MigrationApp {
         }
     }
     
-    // 新增：处理任务取消事件
+    // 新增：处理推断进度事件
+    handleInferenceProgress(data) {
+        const stage = data.inference_stage || 'inference';
+        const message = data.message || '正在推断...';
+        const progress = data.progress || 0;
+        
+        // 显示进度信息
+        this.log(`[AI推断] ${message} (${progress.toFixed(1)}%)`, 'info');
+        
+        // 更新进度条
+        if (progress > 0) {
+            this.updateProgress(progress);
+        }
+        
+        // 根据推断阶段显示不同信息
+        if (stage === 'inference_start') {
+            this.log('开始AI表结构推断...', 'info');
+        } else if (stage === 'building_prompt') {
+            this.log('正在构建推断提示词...', 'info');
+        } else if (stage === 'calling_api') {
+            this.log('正在调用DeepSeek API...', 'info');
+        } else if (stage === 'api_request') {
+            this.log('正在发送API请求...', 'info');
+        } else if (stage === 'api_response') {
+            this.log('正在处理API响应...', 'info');
+        } else if (stage === 'parsing_response') {
+            this.log('正在解析AI响应...', 'info');
+        } else if (stage === 'validating_ddl') {
+            this.log('正在验证DDL语句...', 'info');
+        } else if (stage === 'inference_completed') {
+            this.log('AI推断完成!', 'success');
+        } else if (stage === 'api_timeout') {
+            this.log('API调用超时', 'warning');
+        } else if (stage === 'api_error') {
+            this.log('API调用出错', 'error');
+        }
+        
+        // 显示表名信息
+        if (data.table_name) {
+            this.log(`推断表名: ${data.table_name}`, 'info');
+        }
+    }
     handleTaskCancelled(data) {
         this.log(`任务已取消: ${data.message}`, 'warning');
         

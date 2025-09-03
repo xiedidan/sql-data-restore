@@ -280,6 +280,15 @@ class MigrationWebApp:
             """客户端断开"""
             self.logger.info(f"客户端断开: {request.sid}")
         
+        @self.socketio.on('heartbeat')
+        def handle_heartbeat(data):
+            """处理心跳信号"""
+            emit('heartbeat_response', {
+                'timestamp': time.time(),
+                'client_timestamp': data.get('timestamp'),
+                'server_id': request.sid
+            })
+        
         @self.socketio.on('confirm_ddl')
         def handle_confirm_ddl(data):
             """确认DDL语句"""
@@ -397,7 +406,17 @@ class MigrationWebApp:
             })
             
             # AI推断表结构
-            inference_result = self.schema_engine.infer_table_schema(sample_data)
+            def inference_progress_callback(progress_data):
+                self.socketio.emit('inference_progress', {
+                    'task_id': task_id,
+                    'stage': progress_data.get('stage', 'inference'),
+                    'message': progress_data.get('message', '正在推断...'),
+                    'progress': progress_data.get('progress', 0),
+                    'inference_stage': progress_data.get('stage', ''),
+                    'table_name': table_name
+                })
+            
+            inference_result = self.schema_engine.infer_table_schema(sample_data, inference_progress_callback)
             
             self.active_tasks[task_id].update({
                 'inference_result': inference_result,

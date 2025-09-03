@@ -325,21 +325,87 @@ class ParallelImporter:
                     if not line:
                         continue
                     
-                    current_statement += line + " "
-                    
-                    # 检查语句是否完整（以分号结尾）
-                    if line.endswith(';'):
-                        statements.append(current_statement.strip())
-                        current_statement = ""
+                    # 过滤无效的SQL语句
+                    if self._is_valid_sql_line(line):
+                        current_statement += line + " "
+                        
+                        # 检查语句是否完整（以分号结尾）
+                        if line.endswith(';'):
+                            cleaned_statement = self._clean_sql_statement(current_statement.strip())
+                            if cleaned_statement:
+                                statements.append(cleaned_statement)
+                            current_statement = ""
                 
                 # 添加最后一个语句（如果没有分号结尾）
                 if current_statement.strip():
-                    statements.append(current_statement.strip())
+                    cleaned_statement = self._clean_sql_statement(current_statement.strip())
+                    if cleaned_statement:
+                        statements.append(cleaned_statement)
                     
         except Exception as e:
             self.logger.error(f"加载块文件失败: {chunk_file}, 错误: {str(e)}")
         
         return statements
+    
+    def _is_valid_sql_line(self, line: str) -> bool:
+        """检查是否为有效的SQL行"""
+        line_upper = line.upper().strip()
+        
+        # 过滤注释行
+        if line_upper.startswith('--') or line_upper.startswith('/*') or line_upper.startswith('*/'):
+            return False
+            
+        # 过滤空行
+        if not line_upper:
+            return False
+            
+        # 过滤包含不支持关键字的行
+        invalid_keywords = ['PROMPT', 'SET ', 'SPOOL', 'WHENEVER', 'EXECUTE', 'COMMIT;', 'REM ']
+        for keyword in invalid_keywords:
+            if line_upper.startswith(keyword):
+                return False
+                
+        return True
+    
+    def _clean_sql_statement(self, statement: str) -> str:
+        """清理SQL语句，移除不支持的内容"""
+        if not statement:
+            return ""
+            
+        # 移除常见的Oracle特有内容
+        lines = statement.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            line_upper = line.upper()
+            
+            # 过滤不支持的语句
+            skip_line = False
+            invalid_patterns = [
+                'PROMPT ', 'SET ', 'SPOOL ', 'WHENEVER ', 'EXECUTE ', 
+                'REM ', '@', 'DEFINE ', 'UNDEFINE ', 'COLUMN ',
+                'TTITLE ', 'BTITLE ', 'BREAK ', 'COMPUTE '
+            ]
+            
+            for pattern in invalid_patterns:
+                if line_upper.startswith(pattern):
+                    skip_line = True
+                    break
+                    
+            if not skip_line:
+                cleaned_lines.append(line)
+        
+        cleaned_statement = ' '.join(cleaned_lines)
+        
+        # 确保只包含INSERT语句
+        if cleaned_statement.upper().strip().startswith('INSERT'):
+            return cleaned_statement
+        else:
+            return ""
     
     def _import_single_chunk(self, task: ImportTask) -> ExecutionResult:
         """导入单个文件块"""

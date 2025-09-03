@@ -47,26 +47,54 @@ class SchemaInferenceEngine:
         if not self.api_key or self.api_key == "your_deepseek_api_key_here":
             self.logger.warning("DeepSeek API密钥未配置，推断功能将不可用")
     
-    def infer_table_schema(self, sample_data: Dict) -> InferenceResult:
+    def infer_table_schema(self, sample_data: Dict, progress_callback: Optional[callable] = None) -> InferenceResult:
         """
         推断表结构
         
         Args:
             sample_data: 从SQLFileParser提取的样本数据
+            progress_callback: 进度回调函数
             
         Returns:
             推断结果
         """
         start_time = time.time()
         
+        if progress_callback:
+            progress_callback({
+                'stage': 'inference_start',
+                'message': '开始 AI 表结构推断...',
+                'progress': 0
+            })
+        
         try:
             # 构建提示词
+            if progress_callback:
+                progress_callback({
+                    'stage': 'building_prompt',
+                    'message': '正在构建 AI 推断提示词...',
+                    'progress': 10
+                })
+            
             prompt = self._build_inference_prompt(sample_data)
             
             # 调用API
-            api_response = self.call_deepseek_api(prompt)
+            if progress_callback:
+                progress_callback({
+                    'stage': 'calling_api',
+                    'message': '正在调用 DeepSeek API 进行推断...',
+                    'progress': 30
+                })
+            
+            api_response = self.call_deepseek_api(prompt, progress_callback)
             
             if not api_response:
+                if progress_callback:
+                    progress_callback({
+                        'stage': 'inference_failed',
+                        'message': 'API 调用失败',
+                        'progress': 0
+                    })
                 return InferenceResult(
                     success=False,
                     ddl_statement="",
@@ -75,12 +103,33 @@ class SchemaInferenceEngine:
                 )
             
             # 解析响应
+            if progress_callback:
+                progress_callback({
+                    'stage': 'parsing_response',
+                    'message': '正在解析 AI 响应...',
+                    'progress': 80
+                })
+            
             ddl_statement = self.parse_ddl_response(api_response)
             
             # 验证DDL语句
+            if progress_callback:
+                progress_callback({
+                    'stage': 'validating_ddl',
+                    'message': '正在验证 DDL 语句...',
+                    'progress': 90
+                })
+            
             is_valid = self.validate_doris_ddl(ddl_statement)
             
             inference_time = time.time() - start_time
+            
+            if progress_callback:
+                progress_callback({
+                    'stage': 'inference_completed',
+                    'message': f'推断完成，耗时 {inference_time:.2f}秒',
+                    'progress': 100
+                })
             
             return InferenceResult(
                 success=is_valid,
@@ -92,6 +141,12 @@ class SchemaInferenceEngine:
             
         except Exception as e:
             self.logger.error(f"推断表结构失败: {str(e)}")
+            if progress_callback:
+                progress_callback({
+                    'stage': 'inference_error',
+                    'message': f'推断出错: {str(e)}',
+                    'progress': 0
+                })
             return InferenceResult(
                 success=False,
                 ddl_statement="",
@@ -100,12 +155,13 @@ class SchemaInferenceEngine:
                 inference_time=time.time() - start_time
             )
     
-    def call_deepseek_api(self, prompt: str) -> Optional[str]:
+    def call_deepseek_api(self, prompt: str, progress_callback: Optional[callable] = None) -> Optional[str]:
         """
         调用DeepSeek API
         
         Args:
             prompt: 提示词
+            progress_callback: 进度回调函数
             
         Returns:
             API响应内容
@@ -135,6 +191,13 @@ class SchemaInferenceEngine:
         try:
             self.logger.info("调用DeepSeek API进行表结构推断...")
             
+            if progress_callback:
+                progress_callback({
+                    'stage': 'api_request',
+                    'message': '正在发送 API 请求...',
+                    'progress': 35
+                })
+            
             response = requests.post(
                 f"{self.base_url}/v1/chat/completions",
                 headers=headers,
@@ -142,10 +205,25 @@ class SchemaInferenceEngine:
                 timeout=self.timeout
             )
             
+            if progress_callback:
+                progress_callback({
+                    'stage': 'api_response',
+                    'message': '正在处理 API 响应...',
+                    'progress': 65
+                })
+            
             if response.status_code == 200:
                 result = response.json()
                 content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
                 self.logger.info("DeepSeek API调用成功")
+                
+                if progress_callback:
+                    progress_callback({
+                        'stage': 'api_success',
+                        'message': 'API 调用成功，正在处理响应...',
+                        'progress': 75
+                    })
+                
                 return content
             else:
                 self.logger.error(f"DeepSeek API调用失败: {response.status_code}, {response.text}")
@@ -153,12 +231,30 @@ class SchemaInferenceEngine:
                 
         except requests.exceptions.Timeout:
             self.logger.error("DeepSeek API调用超时")
+            if progress_callback:
+                progress_callback({
+                    'stage': 'api_timeout',
+                    'message': 'API 调用超时',
+                    'progress': 0
+                })
             return None
         except requests.exceptions.RequestException as e:
             self.logger.error(f"DeepSeek API网络错误: {str(e)}")
+            if progress_callback:
+                progress_callback({
+                    'stage': 'api_network_error',
+                    'message': f'API 网络错误: {str(e)}',
+                    'progress': 0
+                })
             return None
         except Exception as e:
             self.logger.error(f"DeepSeek API调用异常: {str(e)}")
+            if progress_callback:
+                progress_callback({
+                    'stage': 'api_error',
+                    'message': f'API 调用异常: {str(e)}',
+                    'progress': 0
+                })
             return None
     
     def parse_ddl_response(self, api_response: str) -> str:

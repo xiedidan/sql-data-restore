@@ -778,7 +778,20 @@ class OracleDoriseMigrator:
                     'message': '任务在推断过程中被取消',
                     'error_code': 'TASK_CANCELLED'
                 }
-            inference_result = self.schema_engine.infer_table_schema(sample_data)
+            
+            # 定义推断进度回调
+            def inference_progress_callback(progress_data):
+                if progress_callback:
+                    # 转发给上层的进度回调
+                    progress_callback({
+                        'stage': 'inference',
+                        'message': progress_data.get('message', '正在推断...'),
+                        'progress': 50 + (progress_data.get('progress', 0) * 0.4),  # 50%-90%
+                        'inference_stage': progress_data.get('stage', ''),
+                        'table_name': task.table_name
+                    })
+            
+            inference_result = self.schema_engine.infer_table_schema(sample_data, inference_progress_callback)
             task.inference_result = inference_result
             task.ddl_statement = inference_result.ddl_statement
             
