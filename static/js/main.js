@@ -7,22 +7,212 @@ class MigrationApp {
         this.socket = null;
         this.currentTask = null;
         this.tasks = new Map();
+        this.communicationMode = 'auto';  // 默认模式
+        this.pollingInterval = null;
+        this.pollingEnabled = false;
+        this.lastServerTime = 0;
         
         this.init();
     }
     
     init() {
-        this.initSocketIO();
-        this.initEventListeners();
-        this.initFileUpload();
-        this.initServerPathFeature();  // 新增：初始化服务器路径功能
-        this.loadTasks();
+        // 首先检测服务器通信模式
+        this.detectCommunicationMode().then(() => {
+            if (this.communicationMode === 'polling_only') {
+                this.log('使用纯轮询模式', 'info');
+                this.initPollingMode();
+            } else {
+                this.log(`使用${this.communicationMode}模式`, 'info');
+                this.initSocketIO();
+                // 如果是轮询优先或自动模式，同时启用轮询作为备用
+                if (this.communicationMode === 'polling' || this.communicationMode === 'auto') {
+                    this.enablePollingBackup();
+                }
+            }
+            
+            this.initEventListeners();
+            this.initFileUpload();
+            this.initServerPathFeature();
+            this.loadTasks();
+            
+            this.log('系统初始化完成', 'info');
+        });
+    }
+    
+    // 检测服务器通信模式
+    async detectCommunicationMode() {
+        try {
+            const response = await fetch('/poll/status');
+            const data = await response.json();
+            
+            if (data.success) {
+                this.communicationMode = data.communication_mode || 'auto';
+                this.log(`检测到服务器通信模式: ${this.communicationMode}`, 'info');
+            } else {
+                this.communicationMode = 'auto';  // 默认模式
+            }
+        } catch (error) {
+            console.warn('无法检测通信模式，使用默认模式', error);
+            this.communicationMode = 'auto';
+        }
+    }
+    
+    // 初始化纯轮询模式
+    initPollingMode() {
+        this.pollingEnabled = true;
+        this.log('启用纯轮询模式', 'info');
         
-        this.log('系统初始化完成', 'info');
+        // 立即开始轮询
+        this.startPolling();
+        
+        // 更新连接状态
+        this.updateConnectionStatus(true);
+    }
+    
+    // 启用轮询备用机制
+    enablePollingBackup() {
+        this.log('启用轮询备用机制', 'info');
+        
+        // WebSocket连接失败时自动切换到轮询
+        if (this.socket) {
+            this.socket.on('disconnect', () => {
+                if (!this.pollingEnabled) {
+                    this.log('WebSocket断开，切换到轮询模式', 'warning');
+                    this.startPolling();
+                }
+            });
+            
+            this.socket.on('connect', () => {
+                if (this.pollingEnabled) {
+                    this.log('WebSocket重新连接，停止轮询模式', 'info');
+                    this.stopPolling();
+                }
+            });
+        }
+    }
+    
+    // 开始轮询
+    startPolling() {
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+        }
+        
+        this.pollingEnabled = true;
+        this.updateConnectionStatus(true);
+        
+        this.pollingInterval = setInterval(() => {
+            this.pollServerStatus();
+        }, 2000); // 每2秒轮询一次
+        
+        // 立即执行一次轮询
+        this.pollServerStatus();
+        
+        this.log('轮询模式已启动', 'success');
+    }
+    
+    // 停止轮询
+    stopPolling() {
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+        }
+        
+        this.pollingEnabled = false;
+        this.log('轮询模式已停止', 'info');
+    }
+    
+    // 轮询服务器状态
+    async pollServerStatus() {
+        try {
+            const response = await fetch('/poll/status');
+            const data = await response.json();
+            
+            if (data.success) {
+                this.handlePollingResponse(data);
+            } else {
+                this.log(`轮询失败: ${data.error || '未知错误'}`, 'error');
+            }
+        } catch (error) {
+            console.error('轮询请求失败:', error);
+            this.updateConnectionStatus(false);
+        }
+    }
+    
+    // 处理轮询响应
+    handlePollingResponse(data) {
+        // 更新服务器时间
+        this.lastServerTime = data.server_time;
+        
+        // 更新任务状态
+        const serverTasks = data.tasks || {};
+        const hasChanges = this.updateTasksFromPolling(serverTasks);
+        
+        // 如果有变化，更新UI
+        if (hasChanges) {
+            this.updateTaskList(Object.values(serverTasks));
+            this.checkForStatusUpdates(serverTasks);
+        }
+        
+        // 更新连接状态
+        this.updateConnectionStatus(true);
+    }
+    
+    // 更新任务状态（轮询模式）
+    updateTasksFromPolling(serverTasks) {
+        let hasChanges = false;
+        
+        // 检查新任务或状态变化
+        for (const [taskId, serverTask] of Object.entries(serverTasks)) {
+            const localTask = this.tasks.get(taskId);
+            
+            if (!localTask) {
+                // 新任务
+                this.tasks.set(taskId, {
+                    task_id: taskId,
+                    ...serverTask,
+                    created_at: Date.now() / 1000
+                });
+                hasChanges = true;
+                this.log(`发现新任务: ${serverTask.table_name || serverTask.filename}`, 'info');
+            } else {
+                // 检查状态变化
+                if (localTask.status !== serverTask.status || 
+                    localTask.progress !== serverTask.progress ||
+                    localTask.ddl_statement !== serverTask.ddl_statement) {
+                    
+                    // 更新本地任务
+                    Object.assign(localTask, serverTask);
+                    hasChanges = true;
+                    
+                    this.log(`任务状态更新: ${localTask.table_name || localTask.filename} - ${serverTask.status}`, 'info');
+                }
+            }
+        }
+        
+        return hasChanges;
+    }
+    
+    // 检查状态更新（轮询模式）
+    checkForStatusUpdates(serverTasks) {
+        for (const [taskId, serverTask] of Object.entries(serverTasks)) {
+            if (serverTask.status === 'waiting_confirmation' && serverTask.ddl_statement) {
+                // 检查是否需要显示DDL确认界面
+                if (!this.currentTask || this.currentTask.task_id !== taskId) {
+                    this.selectTask(taskId);
+                    this.showDDLEditor();
+                    this.log(`自动选择待确认任务: ${serverTask.table_name || serverTask.filename}`, 'success');
+                    
+                    // 滚动到DDL区域
+                    document.getElementById('ddl-section').scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            }
+        }
     }
     
     // SocketIO初始化
-    initSocketIO() {
         // 配置SocketIO选项
         const socketOptions = {
             transports: ['polling', 'websocket'],  // 允许多种传输方式
@@ -653,12 +843,44 @@ class MigrationApp {
             return;
         }
         
-        this.socket.emit('confirm_ddl', {
-            task_id: this.currentTask.task_id,
-            ddl_statement: ddl
-        });
+        if (this.pollingEnabled) {
+            // 轮询模式下使用HTTP请求
+            this.confirmDDLViaHTTP(this.currentTask.task_id, ddl);
+        } else {
+            // WebSocket模式
+            this.socket.emit('confirm_ddl', {
+                task_id: this.currentTask.task_id,
+                ddl_statement: ddl
+            });
+        }
         
         this.log('DDL语句已确认，开始执行...', 'info');
+    }
+    
+    // 轮询模式下的DDL确认
+    async confirmDDLViaHTTP(taskId, ddl) {
+        try {
+            const response = await fetch('/confirm_ddl', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    task_id: taskId,
+                    ddl_statement: ddl
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                this.log('DDL确认成功', 'success');
+            } else {
+                this.log(`DDL确认失败: ${result.message}`, 'error');
+            }
+        } catch (error) {
+            this.log(`DDL确认请求失败: ${error.message}`, 'error');
+        }
     }
     
     // 修改DDL

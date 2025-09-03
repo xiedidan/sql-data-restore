@@ -26,6 +26,15 @@ web_interface:
   port: 5000                            # 监听端口
   debug: false                          # 是否开启调试模式
   secret_key: "your_secret_key_here"    # Flask密钥，请使用随机字符串
+  
+  # 实时通信配置
+  communication:
+    mode: "auto"                        # 通信模式：auto(自动选择), websocket(WebSocket优先), polling(轮询优先), polling_only(仅轮询)
+    websocket_timeout: 120              # WebSocket超时时间（秒）
+    polling_interval: 2                 # 轮询间隔（秒）
+    max_reconnect_attempts: 15          # 最大重连次数
+    heartbeat_interval: 20              # 心跳间隔（秒）
+    fallback_to_polling: true           # WebSocket失败时是否回退到轮询
 
 # 迁移配置
 migration:
@@ -36,6 +45,21 @@ migration:
   retry_count: 3                        # 失败重试次数
   enable_user_confirmation: true        # 是否启用用户确认DDL
   temp_dir: "./temp"                    # 临时文件目录
+  
+  # 并行性能优化配置
+  enable_parallel_insert: true          # 启用并行插入（推荐）
+  parallel_batch_size: 500              # 并行批次大小（适合并行的批次大小）
+  connection_pool_size: 8               # 连接池大小（默认等于max_workers）
+  
+  # 编码处理配置
+  encoding_detection_confidence: 0.7    # 编码检测置信度阈值
+  fallback_encodings:                   # 回退编码列表
+    - "utf-8"
+    - "gbk" 
+    - "gb2312"
+    - "utf-16"
+    - "big5"
+    - "latin1"
 
 # SQL解析器配置（性能优化）
 parser:
@@ -84,3 +108,10 @@ logging:
 # 2. 根据可用内存调整 chunk_size_mb（推荐：总内存的5-10%）
 # 3. 根据网络延迟调整 batch_size（高延迟环境使用更大批次）
 # 4. 在生产环境中关闭debug模式并设置适当的日志级别
+# 5. 并行插入优化：
+#    - enable_parallel_insert: true 启用并行插入，显著提升性能
+#    - connection_pool_size: 设置为服务器CPU核心数
+#    - parallel_batch_size: 适中值，太大可能占用过多内存
+# 6. 中文编码优化：
+#    - encoding_detection_confidence: 0.7 置信度阈值，防止误判
+#    - fallback_encodings: 包含常用中文编码的回退列表

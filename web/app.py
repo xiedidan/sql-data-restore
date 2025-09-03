@@ -36,14 +36,21 @@ class MigrationWebApp:
         # 加载配置
         self.config = self._load_config(config_path)
         
+        # 获取通信配置
+        self.comm_config = self.config.get('web_interface', {}).get('communication', {})
+        self.comm_mode = self.comm_config.get('mode', 'auto')
+        self.polling_interval = self.comm_config.get('polling_interval', 2)
+        self.websocket_timeout = self.comm_config.get('websocket_timeout', 120)
+        self.fallback_to_polling = self.comm_config.get('fallback_to_polling', True)
+        
         # 初始化Flask应用
         self.app = Flask(__name__, 
                          template_folder='../templates',
                          static_folder='../static')
         self.app.config['SECRET_KEY'] = self.config.get('web_interface', {}).get('secret_key', 'dev_secret_key')
         
-        # 初始化SocketIO
-        self.socketio = SocketIO(self.app, cors_allowed_origins="*")
+        # 根据配置初始化SocketIO
+        self.socketio = self._init_socketio()
         
         # 初始化核心组件
         self.sql_parser = SQLFileParser(self.config)
@@ -63,6 +70,47 @@ class MigrationWebApp:
         self._register_socketio_events()
         
         self.logger = logging.getLogger(__name__)
+    
+    def _init_socketio(self):
+        """根据配置初始化SocketIO"""
+        if self.comm_mode == 'polling_only':
+            # 仅使用轮询模式
+            socketio_config = {
+                'cors_allowed_origins': "*",
+                'transports': ['polling'],
+                'ping_timeout': self.websocket_timeout,
+                'ping_interval': self.polling_interval
+            }
+            self.logger.info("使用纯轮询模式")
+        elif self.comm_mode == 'polling':
+            # 轮询优先模式
+            socketio_config = {
+                'cors_allowed_origins': "*",
+                'transports': ['polling', 'websocket'],
+                'ping_timeout': self.websocket_timeout,
+                'ping_interval': self.polling_interval
+            }
+            self.logger.info("使用轮询优先模式")
+        elif self.comm_mode == 'websocket':
+            # WebSocket优先模式
+            socketio_config = {
+                'cors_allowed_origins': "*",
+                'transports': ['websocket', 'polling'] if self.fallback_to_polling else ['websocket'],
+                'ping_timeout': self.websocket_timeout,
+                'ping_interval': self.comm_config.get('heartbeat_interval', 20)
+            }
+            self.logger.info(f"WebSocket优先模式，回退: {self.fallback_to_polling}")
+        else:
+            # 自动模式（默认）
+            socketio_config = {
+                'cors_allowed_origins': "*",
+                'transports': ['polling', 'websocket'],
+                'ping_timeout': self.websocket_timeout,
+                'ping_interval': max(self.polling_interval, 5)  # 自动模式下保持合理间隔
+            }
+            self.logger.info("使用自动模式（轮询+WebSocket）")
+        
+        return SocketIO(self.app, **socketio_config)
     
     def _load_config(self, config_path: str) -> Dict:
         """加载配置文件"""
@@ -165,6 +213,152 @@ class MigrationWebApp:
                 })
             else:
                 return jsonify({'success': False, 'message': '任务不存在'}), 404
+        
+        # ======== 轮询模式API ========
+        
+        @self.app.route('/poll/status')
+        def poll_status():
+            """轮询模式状态获取"""
+            try:
+                # 获取所有任务状态
+                tasks_status = {
+                    task_id: {
+                        'status': task_info['status'],
+                        'progress': task_info.get('progress', 0),
+                        'table_name': task_info.get('table_name', ''),
+                        'filename': task_info.get('filename', ''),
+                        'ddl_statement': task_info.get('ddl_statement', ''),
+                        'confidence_score': task_info.get('confidence_score', 0),
+                        'estimated_rows': task_info.get('estimated_rows', 0),
+                        'last_update': task_info.get('last_update', time.time()),
+                        'error_message': task_info.get('error_message', '')
+                    }
+                    for task_id, task_info in self.active_tasks.items()
+                }
+                
+                return jsonify({
+                    'success': True,
+                    'tasks': tasks_status,
+                    'server_time': time.time(),
+                    'communication_mode': self.comm_mode
+                })
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': str(e)
+                }), 500
+        
+        @self.app.route('/poll/events/<task_id>')
+        def poll_task_events(task_id):
+            """轮询模式任务事件获取"""
+            try:
+                if task_id in self.active_tasks:
+                    task_info = self.active_tasks[task_id]
+                    
+                    # 构建事件响应
+                    events = []
+                    
+                    # 根据任务状态生成事件
+                    if task_info['status'] == 'waiting_confirmation':
+                        events.append({
+                            'type': 'schema_inferred',
+                            'data': {
+                                'task_id': task_id,
+                                'table_name': task_info.get('table_name', ''),
+                                'ddl_statement': task_info.get('ddl_statement', ''),
+                                'confidence_score': task_info.get('confidence_score', 0),
+                                'message': '表结构推断完成，等待用户确认...'
+                            }
+                        })
+                    elif task_info['status'] == 'importing':
+                        events.append({
+                            'type': 'import_progress',
+                            'data': {
+                                'task_id': task_id,
+                                'progress': task_info.get('progress', 0),
+                                'message': '正在导入数据...'
+                            }
+                        })
+                    elif task_info['status'] == 'completed':
+                        events.append({
+                            'type': 'import_completed',
+                            'data': {
+                                'task_id': task_id,
+                                'message': '数据导入完成'
+                            }
+                        })
+                    elif task_info['status'] == 'failed':
+                        events.append({
+                            'type': 'task_failed',
+                            'data': {
+                                'task_id': task_id,
+                                'error_message': task_info.get('error_message', '未知错误')
+                            }
+                        })
+                    
+                    return jsonify({
+                        'success': True,
+                        'events': events,
+                        'task_status': task_info['status']
+                    })
+                else:
+                    return jsonify({
+                        'success': False, 
+                        'message': '任务不存在'
+                    }), 404
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': str(e)
+                }), 500
+        
+        @self.app.route('/confirm_ddl', methods=['POST'])
+        def confirm_ddl_http():
+            """轮询模式下DDL确认"""
+            try:
+                data = request.get_json()
+                task_id = data.get('task_id')
+                ddl_statement = data.get('ddl_statement')
+                
+                if not task_id or not ddl_statement:
+                    return jsonify({
+                        'success': False,
+                        'message': '缺少必要参数'
+                    }), 400
+                
+                if task_id in self.active_tasks:
+                    self.active_tasks[task_id]['ddl_statement'] = ddl_statement
+                    self.active_tasks[task_id]['status'] = 'ddl_confirmed'
+                    self.active_tasks[task_id]['last_update'] = time.time()
+                    
+                    # 启动建表和导入
+                    threading.Thread(
+                        target=self._start_table_creation_and_import,
+                        args=(task_id,)
+                    ).start()
+                    
+                    # 同时发送WebSocket事件（如果有连接）
+                    self.socketio.emit('ddl_confirmed', {
+                        'task_id': task_id,
+                        'message': 'DDL已确认，开始创建表和导入数据...'
+                    })
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': 'DDL已确认，开始执行...'
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'message': '任务不存在'
+                    }), 404
+                    
+            except Exception as e:
+                self.logger.error(f"轮询模式确认DDL失败: {str(e)}")
+                return jsonify({
+                    'success': False,
+                    'message': f'服务器错误: {str(e)}'
+                }), 500
         
         # ======== 服务器文件路径功能API ========
         
@@ -445,6 +639,9 @@ class MigrationWebApp:
                 'message': '表结构推断完成，等待用户确认...'
             })
             
+            # 更新任务时间戳
+            self.active_tasks[task_id]['last_update'] = time.time()
+            
         except Exception as e:
             self.logger.error(f"处理上传文件失败: {str(e)}")
             self.active_tasks[task_id].update({
@@ -478,7 +675,8 @@ class MigrationWebApp:
             
             task_info.update({
                 'status': 'importing',
-                'progress': 60
+                'progress': 60,
+                'last_update': time.time()
             })
             
             self.socketio.emit('table_created', {

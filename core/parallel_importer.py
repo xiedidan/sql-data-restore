@@ -94,11 +94,18 @@ class ParallelImporter:
         self.retry_count = migration_config.get('retry_count', 3)
         self.temp_dir = migration_config.get('temp_dir', './temp')
         
+        # 并行性能配置
+        self.enable_parallel_insert = migration_config.get('enable_parallel_insert', True)
+        self.parallel_batch_size = migration_config.get('parallel_batch_size', 500)  # 并行批次大小
+        self.connection_pool_size = migration_config.get('connection_pool_size', self.max_workers)
+        
         self.progress_callback = progress_callback
         self.logger = logging.getLogger(__name__)
         
         # 确保临时目录存在
         os.makedirs(self.temp_dir, exist_ok=True)
+        
+        self.logger.info(f"并行导入器初始化: 最大工作线程={self.max_workers}, 并行插入={'enabled' if self.enable_parallel_insert else 'disabled'}")
     
     def split_sql_file(self, file_path: str, table_name: str) -> List[str]:
         """
@@ -410,15 +417,25 @@ class ParallelImporter:
             return ""
     
     def _import_single_chunk(self, task: ImportTask) -> ExecutionResult:
-        """导入单个文件块"""
+        """导入单个文件块（使用并行连接池）"""
         try:
-            # 创建数据库连接
-            db_conn = DorisConnection(self.config)
+            # 创建数据库连接（启用连接池）
+            db_conn = DorisConnection(self.config, use_connection_pool=self.enable_parallel_insert)
             
             # 批量执行SQL语句
             if task.sql_statements:
-                result = db_conn.execute_batch_insert(task.sql_statements)
+                # 使用新的并行批量插入功能
+                result = db_conn.execute_batch_insert(
+                    task.sql_statements, 
+                    use_parallel=self.enable_parallel_insert
+                )
                 task.status = "completed" if result.success else "failed"
+                
+                # 记录性能指标
+                if result.success:
+                    rows_per_second = result.affected_rows / max(result.execution_time, 0.001)
+                    self.logger.debug(f"块 {task.task_id} 性能: {rows_per_second:.0f} 行/秒")
+                
                 return result
             else:
                 return ExecutionResult(
@@ -434,6 +451,13 @@ class ParallelImporter:
                 error_message=str(e),
                 execution_time=0
             )
+        finally:
+            # 关闭连接或连接池
+            try:
+                if 'db_conn' in locals():
+                    db_conn.close()
+            except:
+                pass
     
     def _cleanup_chunks(self, chunk_files: List[str]):
         """清理临时文件块"""
@@ -446,7 +470,7 @@ class ParallelImporter:
     
     def handle_import_errors(self, failed_chunks: List[str], table_name: str) -> bool:
         """
-        处理导入错误，重试失败的块
+        处理导入错误，重试失败的块（使用并行连接）
         
         Args:
             failed_chunks: 失败的块文件列表
@@ -465,14 +489,20 @@ class ParallelImporter:
             try:
                 # 重新加载并导入失败的块
                 statements = self._load_chunk_statements(chunk_file)
-                db_conn = DorisConnection(self.config)
-                result = db_conn.execute_batch_insert(statements)
+                db_conn = DorisConnection(self.config, use_connection_pool=self.enable_parallel_insert)
+                result = db_conn.execute_batch_insert(
+                    statements, 
+                    use_parallel=self.enable_parallel_insert
+                )
                 
                 if result.success:
                     success_count += 1
                     self.logger.info(f"重试成功: {chunk_file}")
                 else:
                     self.logger.error(f"重试失败: {chunk_file}, 错误: {result.error_message}")
+                    
+                # 关闭连接
+                db_conn.close()
                     
             except Exception as e:
                 self.logger.error(f"重试异常: {chunk_file}, 错误: {str(e)}")
