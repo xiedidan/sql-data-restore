@@ -5,16 +5,29 @@
 """
 
 import os
+import sys
 import logging
 import time
 import yaml
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass
 
-from .core.sql_parser import SQLFileParser, TableSchema
-from .core.schema_inference import SchemaInferenceEngine, InferenceResult
-from .core.doris_connection import DorisConnection, ExecutionResult
-from .core.parallel_importer import ParallelImporter, ImportResult
+# 尝试相对导入，如果失败则使用绝对导入
+try:
+    from .core.sql_parser import SQLFileParser, TableSchema
+    from .core.schema_inference import SchemaInferenceEngine, InferenceResult
+    from .core.doris_connection import DorisConnection, ExecutionResult
+    from .core.parallel_importer import ParallelImporter, ImportResult
+except ImportError:
+    # 添加项目根目录到路径
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    
+    from core.sql_parser import SQLFileParser, TableSchema
+    from core.schema_inference import SchemaInferenceEngine, InferenceResult
+    from core.doris_connection import DorisConnection, ExecutionResult
+    from core.parallel_importer import ParallelImporter, ImportResult
 
 @dataclass
 class MigrationTask:
