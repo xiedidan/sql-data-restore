@@ -1,5 +1,7 @@
 # Oracle到Doris数据迁移系统配置
+# 基本配置，请根据实际环境修改
 
+# 数据库连接配置
 database:
   doris:
     host: "localhost"
@@ -8,7 +10,8 @@ database:
     password: ""
     database: "migration_db"
     charset: "utf8mb4"
-    
+
+# DeepSeek AI配置
 deepseek:
   api_key: "your_deepseek_api_key_here"
   base_url: "https://api.deepseek.com"
@@ -16,13 +19,15 @@ deepseek:
   max_tokens: 4000
   temperature: 0.1
   timeout: 30
-  
+
+# Web界面配置
 web_interface:
   host: "0.0.0.0"
   port: 5000
   debug: false
-  secret_key: "your_secret_key_here"
-  
+  secret_key: "dev_secret_key_change_in_production"
+
+# 迁移配置
 migration:
   sample_lines: 100
   chunk_size_mb: 30
@@ -31,7 +36,8 @@ migration:
   retry_count: 3
   enable_user_confirmation: true
   temp_dir: "./temp"
-  
+
+# 日志配置
 logging:
   level: "INFO"
   file: "migration.log"

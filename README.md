@@ -176,6 +176,102 @@ python app.py --mode web
 
 访问 `http://localhost:5000` 使用Web界面。
 
+#### 后台启动模式
+
+**使用nohup（Linux/macOS）：**
+```bash
+# 后台启动Web服务
+nohup python app.py --mode web > migration.log 2>&1 &
+
+# 查看进程
+ps aux | grep "app.py"
+
+# 查看日志
+tail -f migration.log
+
+# 停止服务
+pkill -f "app.py --mode web"
+```
+
+**使用screen（Linux/macOS）：**
+```bash
+# 创建screen会话
+screen -S migration-tool
+
+# 在screen中启动服务
+python app.py --mode web
+
+# 分离会话（Ctrl+A, D）
+# 重新连接：screen -r migration-tool
+# 终止会话：screen -S migration-tool -X quit
+```
+
+**使用systemd服务（Linux）：**
+```bash
+# 创建服务文件
+sudo tee /etc/systemd/system/sql-migration.service << EOF
+[Unit]
+Description=Oracle to Doris Migration Tool
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+Group=your-group
+WorkingDirectory=/path/to/sql-data-restore
+Environment=PATH=/path/to/sql-data-restore/venv/bin
+ExecStart=/path/to/sql-data-restore/venv/bin/python app.py --mode web
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 启动服务
+sudo systemctl daemon-reload
+sudo systemctl enable sql-migration
+sudo systemctl start sql-migration
+
+# 查看状态
+sudo systemctl status sql-migration
+
+# 查看日志
+sudo journalctl -u sql-migration -f
+```
+
+**Windows后台启动：**
+```cmd
+:: 使用start命令后台启动
+start /B python app.py --mode web > migration.log 2>&1
+
+:: 查看进程
+tasklist | findstr python
+
+:: 停止进程（需要找到对应PID）
+taskkill /PID <process_id> /F
+```
+
+**使用Windows服务（高级）：**
+```bash
+# 安装pywin32
+pip install pywin32
+
+# 使用NSSM创建Windows服务
+# 1. 下载NSSM: https://nssm.cc/download
+# 2. 安装服务
+nssm install SQLMigrationTool
+# Application: C:\path\to\sql-data-restore\venv\Scripts\python.exe
+# Arguments: app.py --mode web
+# Startup directory: C:\path\to\sql-data-restore
+
+# 启动服务
+net start SQLMigrationTool
+
+# 停止服务
+net stop SQLMigrationTool
+```
+
 #### 命令行模式
 
 ```bash
@@ -186,6 +282,26 @@ python app.py --mode cli
 
 ```bash
 python app.py --mode test
+```
+
+#### 一键启动脚本
+
+**Linux/macOS：**
+```bash
+# 前台启动（交互式）
+./start.sh
+
+# 后台启动（多种方式可选）
+./start-daemon.sh
+```
+
+**Windows：**
+```cmd
+:: 前台启动（交互式）
+start.bat
+
+:: 后台启动（多种方式可选）
+start-daemon.bat
 ```
 
 ## 📖 使用指南
@@ -288,6 +404,181 @@ web_interface:
   port: 5000                # 监听端口
   debug: false              # 调试模式
   secret_key: "your-secret" # 密钥
+```
+
+## 🔧 后台服务管理
+
+### 快速后台启动
+
+**使用一键启动脚本（推荐）：**
+
+```bash
+# Linux/macOS
+./start-daemon.sh
+
+# Windows
+start-daemon.bat
+```
+
+这些脚本提供了交互式菜单，支持多种后台启动方式。
+
+### 手动后台启动
+
+#### Linux/macOS 方式
+
+**1. 使用 nohup（简单快捷）**
+```bash
+# 后台启动
+nohup python app.py --mode web > migration.log 2>&1 &
+
+# 查看进程
+ps aux | grep "app.py"
+
+# 停止服务
+pkill -f "app.py --mode web"
+
+# 查看日志
+tail -f migration.log
+```
+
+**2. 使用 screen（可重连）**
+```bash
+# 创建会话
+screen -S migration-tool
+
+# 在screen中启动服务
+python app.py --mode web
+
+# 分离会话：Ctrl+A, D
+# 重新连接：screen -r migration-tool
+# 终止会话：screen -S migration-tool -X quit
+```
+
+**3. 使用 systemd（系统服务）**
+```bash
+# 创建服务文件
+sudo tee /etc/systemd/system/sql-migration.service << EOF
+[Unit]
+Description=Oracle to Doris Migration Tool
+After=network.target
+
+[Service]
+Type=simple
+User=$(whoami)
+Group=$(id -gn)
+WorkingDirectory=$(pwd)
+Environment=PATH=$(pwd)/venv/bin
+ExecStart=$(pwd)/venv/bin/python app.py --mode web
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 管理服务
+sudo systemctl daemon-reload
+sudo systemctl enable sql-migration
+sudo systemctl start sql-migration
+
+# 查看状态
+sudo systemctl status sql-migration
+sudo journalctl -u sql-migration -f
+```
+
+#### Windows 方式
+
+**1. 使用 start 命令（简单快捷）**
+```cmd
+:: 后台启动
+start /B python app.py --mode web > migration.log 2>&1
+
+:: 查看进程
+tasklist | findstr python
+
+:: 停止进程（替换<PID>）
+taskkill /PID <PID> /F
+```
+
+**2. 使用 NSSM（Windows服务）**
+```cmd
+:: 1. 下载 NSSM: https://nssm.cc/download
+:: 2. 以管理员身份运行
+
+:: 安装服务
+nssm install SQLMigrationTool
+:: Application: C:\path\to\sql-data-restore\venv\Scripts\python.exe
+:: Arguments: app.py --mode web
+:: Startup directory: C:\path\to\sql-data-restore
+
+:: 管理服务
+net start SQLMigrationTool
+net stop SQLMigrationTool
+```
+
+### 服务状态监控
+
+**查看运行状态：**
+```bash
+# Linux/macOS
+curl -s http://localhost:5000 > /dev/null && echo "服务正常" || echo "服务异常"
+
+# Windows
+powershell -Command "try { Invoke-WebRequest -Uri 'http://localhost:5000' -UseBasicParsing | Out-Null; Write-Host '服务正常' } catch { Write-Host '服务异常' }"
+```
+
+**日志监控：**
+```bash
+# 实时查看日志
+tail -f migration.log
+
+# 查看错误日志
+grep -i error migration.log
+
+# 日志轮转（防止日志文件过大）
+logrotate -f /etc/logrotate.d/sql-migration
+```
+
+### 性能优化建议
+
+**生产环境配置：**
+```yaml
+# config.yaml
+web_interface:
+  host: "0.0.0.0"          # 监听所有网卡
+  port: 5000               # Web服务端口
+  debug: false             # 关闭调试模式
+  
+migration:
+  max_workers: 16          # 根据CPU核心数调整
+  chunk_size_mb: 50        # 根据内存大小调整
+  
+logging:
+  level: "INFO"            # 生产环境使用INFO级别
+  file: "migration.log"    # 日志文件路径
+```
+
+**反向代理配置（Nginx）：**
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+    
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    
+    # WebSocket支持
+    location /socket.io/ {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
 ```
 
 ## 🔧 核心API参考
