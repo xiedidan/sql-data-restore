@@ -305,7 +305,7 @@ class OracleDoriseMigrator:
                     return True
             
             # 创建表
-            result = self.db_connection.create_table(schema.ddl_statement)
+            result = self.db_connection.create_table(schema.ddl_statement, drop_if_exists=True)
             
             if result.success:
                 self.logger.info(f"表创建成功: {schema.table_name}")

@@ -27,46 +27,68 @@ class MigrationApp {
         const socketOptions = {
             transports: ['polling', 'websocket'],  // 允许多种传输方式
             upgrade: true,                         // 允许升级到WebSocket
-            timeout: 60000,                       // 连接超时：60秒
-            forceNew: true,                       // 强制创建新连接
+            timeout: 120000,                      // 连接超时：120秒（延长以适应AI推断）
+            forceNew: false,                      // 不强制创建新连接，允许复用
             reconnection: true,                   // 允许自动重连
             reconnectionDelay: 1000,              // 重连延迟：1秒
-            reconnectionDelayMax: 5000,           // 最大重连延迟：5秒
-            maxReconnectionAttempts: 10,          // 最大重连次数
-            randomizationFactor: 0.5              // 重连随机化因子
+            reconnectionDelayMax: 10000,          // 最大重连延迟：10秒
+            maxReconnectionAttempts: 15,          // 最大重连次数：增加到15次
+            randomizationFactor: 0.3              // 重连随机化因子
         };
         
         this.socket = io(socketOptions);
         
-        // 心跳保持
+        // 心跳保持 - 更频繁的心跳
         this.heartbeatInterval = setInterval(() => {
-            if (this.socket.connected) {
+            if (this.socket && this.socket.connected) {
                 this.socket.emit('heartbeat', {
                     timestamp: Date.now(),
-                    client_id: this.socket.id
+                    client_id: this.socket.id,
+                    page_visible: !document.hidden  // 页面可见性状态
                 });
             }
-        }, 30000);  // 每30秒发送一次心跳
+        }, 20000);  // 每20秒发送一次心跳（更频繁）
+        
+        // 页面可见性变化时重新建立连接
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && this.socket && !this.socket.connected) {
+                this.log('页面重新可见，尝试重新连接...', 'info');
+                this.socket.connect();
+            }
+        });
         
         this.socket.on('connect', () => {
             this.updateConnectionStatus(true);
             this.log('连接到服务器成功', 'success');
+            
+            // 连接成功后立即加载任务
+            this.loadTasks();
         });
         
         this.socket.on('disconnect', (reason) => {
             this.updateConnectionStatus(false);
             this.log(`服务器连接断开: ${reason}`, 'warning');
             
-            // 清理心跳定时器
-            if (this.heartbeatInterval) {
-                clearInterval(this.heartbeatInterval);
+            // 如果是意外断开，立即尝试重连
+            if (reason === 'io server disconnect' || reason === 'ping timeout') {
+                this.log('检测到意外断开，正在重连...', 'info');
+                setTimeout(() => {
+                    if (!this.socket.connected) {
+                        this.socket.connect();
+                    }
+                }, 1000);
             }
         });
         
         this.socket.on('reconnect', (attemptNumber) => {
             this.updateConnectionStatus(true);
             this.log(`重新连接成功 (第${attemptNumber}次尝试)`, 'success');
-            this.loadTasks(); // 重连后重新加载任务
+            
+            // 重连后立即加载任务并检查当前状态
+            this.loadTasks(() => {
+                // 检查是否有推断完成但界面未显示的任务
+                this.checkPendingConfirmations();
+            });
         });
         
         this.socket.on('reconnect_attempt', (attemptNumber) => {
@@ -74,7 +96,11 @@ class MigrationApp {
         });
         
         this.socket.on('reconnect_error', (error) => {
-            this.log(`重连失败: ${error.message}`, 'error');
+            this.log(`重连失败: ${error.toString()}`, 'error');
+        });
+        
+        this.socket.on('connect_error', (error) => {
+            this.log(`连接错误: ${error.toString()}`, 'error');
         });
         
         this.socket.on('heartbeat_response', (data) => {
@@ -669,6 +695,29 @@ class MigrationApp {
         this.log('日志已清空', 'info');
     }
     
+    // 检查待确认的任务（用于重连后恢复状态）
+    checkPendingConfirmations() {
+        // 查找所有等待确认的任务
+        const pendingTasks = Array.from(this.tasks.values()).filter(task => 
+            task.status === 'waiting_confirmation' && task.ddl_statement
+        );
+        
+        if (pendingTasks.length > 0) {
+            this.log(`发现 ${pendingTasks.length} 个待确认的任务`, 'info');
+            
+            // 选择最新的任务
+            const latestTask = pendingTasks.reduce((latest, current) => 
+                (current.created_at || 0) > (latest.created_at || 0) ? current : latest
+            );
+            
+            if (latestTask) {
+                this.selectTask(latestTask.task_id);
+                this.showDDLEditor();
+                this.log(`自动选择最新的待确认任务: ${latestTask.table_name || latestTask.filename}`, 'success');
+            }
+        }
+    }
+    
     // SocketIO事件处理器
     handleTaskStarted(data) {
         this.log(`任务开始: ${data.message}`, 'info');
@@ -693,13 +742,41 @@ class MigrationApp {
     handleSchemaInferred(data) {
         this.log(`推断完成: ${data.message}`, 'success');
         
-        // 自动选择新推断完成的任务为当前任务
+        // 强制重新加载任务并自动选择
         this.loadTasks(() => {
-            // 在任务加载完成后，选择该任务
+            // 在任务加载完成后，强制选择该任务
             const task = this.tasks.get(data.task_id);
             if (task) {
+                // 强制更新任务状态
+                task.status = 'waiting_confirmation';
+                task.ddl_statement = data.ddl_statement;
+                task.confidence_score = data.confidence_score;
+                task.table_name = data.table_name;
+                
+                // 立即选择该任务
                 this.selectTask(data.task_id);
                 this.log(`自动选择任务: ${task.table_name || task.filename}`, 'info');
+                
+                // 强制显示DDL编辑器
+                this.showDDLEditor();
+                
+                // 滚动到DDL区域
+                document.getElementById('ddl-section').scrollIntoView({ 
+                    behavior: 'smooth', 
+                    block: 'start' 
+                });
+            } else {
+                this.log(`警告：未找到任务 ${data.task_id}`, 'warning');
+                // 延迟重试
+                setTimeout(() => {
+                    this.loadTasks(() => {
+                        const retryTask = this.tasks.get(data.task_id);
+                        if (retryTask) {
+                            this.selectTask(data.task_id);
+                            this.showDDLEditor();
+                        }
+                    });
+                }, 1000);
             }
         });
         

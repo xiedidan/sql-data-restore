@@ -89,12 +89,13 @@ class DorisConnection:
             if connection:
                 connection.close()
     
-    def create_table(self, ddl_statement: str) -> ExecutionResult:
+    def create_table(self, ddl_statement: str, drop_if_exists: bool = False) -> ExecutionResult:
         """
         创建表
         
         Args:
             ddl_statement: DDL语句
+            drop_if_exists: 如果表已存在是否删除重建
             
         Returns:
             执行结果
@@ -105,8 +106,26 @@ class DorisConnection:
             # 清理DDL语句中的数据库名称引用
             cleaned_ddl = self._clean_ddl_database_references(ddl_statement)
             
+            # 提取表名
+            table_name = self._extract_table_name_from_ddl(cleaned_ddl)
+            
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
+                    # 检查表是否已存在
+                    if table_name and self.check_table_exists(table_name):
+                        if drop_if_exists:
+                            self.logger.info(f"表 {table_name} 已存在，正在删除重建...")
+                            cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+                            conn.commit()
+                        else:
+                            self.logger.warning(f"表 {table_name} 已存在，跳过创建")
+                            return ExecutionResult(
+                                success=True,
+                                affected_rows=0,
+                                execution_time=time.time() - start_time,
+                                error_message=f"表 {table_name} 已存在"
+                            )
+                    
                     # 执行清理后的DDL语句
                     cursor.execute(cleaned_ddl)
                     conn.commit()
@@ -308,6 +327,49 @@ class DorisConnection:
         insert_statement = insert_statement.strip()
         
         return insert_statement
+    
+    def _extract_table_name_from_ddl(self, ddl_statement: str) -> str:
+        """
+        从 DDL 语句中提取表名
+        
+        Args:
+            ddl_statement: DDL语句
+            
+        Returns:
+            表名
+        """
+        if not ddl_statement:
+            return ""
+            
+        import re
+        
+        # 匹配 CREATE TABLE table_name 模式
+        match = re.search(r'CREATE\s+TABLE\s+(\w+)', ddl_statement, re.IGNORECASE)
+        if match:
+            return match.group(1)
+            
+        return ""
+    
+    def check_table_exists(self, table_name: str) -> bool:
+        """
+        检查表是否存在
+        
+        Args:
+            table_name: 表名
+            
+        Returns:
+            是否存在
+        """
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
+                    result = cursor.fetchone()
+                    return result is not None
+                    
+        except Exception as e:
+            self.logger.error(f"检查表存在性失败: {str(e)}")
+            return False
     
     def get_table_row_count(self, table_name: str) -> int:
         """

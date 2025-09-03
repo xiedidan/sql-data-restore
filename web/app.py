@@ -283,11 +283,20 @@ class MigrationWebApp:
         @self.socketio.on('heartbeat')
         def handle_heartbeat(data):
             """处理心跳信号"""
+            client_timestamp = data.get('timestamp', 0)
+            page_visible = data.get('page_visible', True)
+            
             emit('heartbeat_response', {
                 'timestamp': time.time(),
-                'client_timestamp': data.get('timestamp'),
-                'server_id': request.sid
+                'client_timestamp': client_timestamp,
+                'server_id': request.sid,
+                'latency': time.time() * 1000 - client_timestamp if client_timestamp else 0,
+                'page_visible': page_visible
             })
+            
+            # 如果页面不可见，记录日志
+            if not page_visible:
+                self.logger.debug(f"客户端页面不可见: {request.sid}")
         
         @self.socketio.on('confirm_ddl')
         def handle_confirm_ddl(data):
@@ -462,7 +471,7 @@ class MigrationWebApp:
                 'message': '正在创建表...'
             })
             
-            create_result = self.db_connection.create_table(ddl_statement)
+            create_result = self.db_connection.create_table(ddl_statement, drop_if_exists=True)
             
             if not create_result.success:
                 raise Exception(f"创建表失败: {create_result.error_message}")
