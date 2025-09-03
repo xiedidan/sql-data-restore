@@ -33,6 +33,10 @@ class MigrationWebApp:
         Args:
             config_path: 配置文件路径
         """
+        # 设置日志（首先初始化）
+        self._setup_logging()
+        self.logger = logging.getLogger(__name__)
+        
         # 加载配置
         self.config = self._load_config(config_path)
         
@@ -62,14 +66,9 @@ class MigrationWebApp:
         self.upload_folder = './uploads'
         os.makedirs(self.upload_folder, exist_ok=True)
         
-        # 设置日志
-        self._setup_logging()
-        
         # 注册路由和事件
         self._register_routes()
         self._register_socketio_events()
-        
-        self.logger = logging.getLogger(__name__)
     
     def _init_socketio(self):
         """根据配置初始化SocketIO"""
