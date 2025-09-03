@@ -494,3 +494,353 @@ class OracleDoriseMigrator:
                 pass
         
         self.logger.info("迁移器清理完成")
+    
+    # ======== 服务器文件路径处理功能 ========
+    
+    def validate_server_file_path(self, file_path: str) -> Dict:
+        """
+        验证服务器文件路径
+        
+        Args:
+            file_path: 文件路径
+            
+        Returns:
+            验证结果字典 {'success': bool, 'message': str, 'error_code': str}
+        """
+        try:
+            # 获取文件访问配置
+            file_access_config = self.config.get('file_access', {})
+            
+            # 检查是否启用服务器路径功能
+            if not file_access_config.get('enable_server_path_input', False):
+                return {
+                    'success': False,
+                    'message': '服务器文件路径功能未启用',
+                    'error_code': 'FEATURE_DISABLED'
+                }
+            
+            # 路径格式检查
+            if not file_path or not isinstance(file_path, str):
+                return {
+                    'success': False,
+                    'message': '文件路径不能为空',
+                    'error_code': 'PATH_001'
+                }
+            
+            # 路径长度检查
+            max_path_length = file_access_config.get('max_path_length', 255)
+            if len(file_path) > max_path_length:
+                return {
+                    'success': False,
+                    'message': f'文件路径长度超过限制（{max_path_length}字符）',
+                    'error_code': 'PATH_001'
+                }
+            
+            # 规范化路径
+            normalized_path = self._normalize_file_path(file_path)
+            
+            # 安全性检查
+            security_result = self._is_path_safe(normalized_path)
+            if not security_result['safe']:
+                return {
+                    'success': False,
+                    'message': security_result['message'],
+                    'error_code': 'PATH_002'
+                }
+            
+            # 文件存在检查
+            if not os.path.exists(normalized_path):
+                return {
+                    'success': False,
+                    'message': '文件不存在',
+                    'error_code': 'PATH_003'
+                }
+            
+            # 是否为文件（非目录）
+            if not os.path.isfile(normalized_path):
+                return {
+                    'success': False,
+                    'message': '指定路径不是文件',
+                    'error_code': 'PATH_003'
+                }
+            
+            # 权限检查
+            if not os.access(normalized_path, os.R_OK):
+                return {
+                    'success': False,
+                    'message': '文件无法读取',
+                    'error_code': 'PATH_004'
+                }
+            
+            # 文件扩展名检查
+            allowed_extensions = file_access_config.get('allowed_extensions', ['.sql'])
+            file_ext = os.path.splitext(normalized_path)[1].lower()
+            if file_ext not in allowed_extensions:
+                return {
+                    'success': False,
+                    'message': f'不支持的文件类型，仅支持: {", ".join(allowed_extensions)}',
+                    'error_code': 'PATH_001'
+                }
+            
+            # 文件大小检查
+            max_size_mb = file_access_config.get('max_file_size_mb', 2048)
+            file_size_mb = os.path.getsize(normalized_path) / (1024 * 1024)
+            if file_size_mb > max_size_mb:
+                return {
+                    'success': False,
+                    'message': f'文件大小超过限制（{max_size_mb}MB）',
+                    'error_code': 'PATH_005'
+                }
+            
+            return {
+                'success': True,
+                'message': '文件路径验证成功',
+                'normalized_path': normalized_path
+            }
+            
+        except Exception as e:
+            self.logger.error(f"验证服务器文件路径异常: {str(e)}")
+            return {
+                'success': False,
+                'message': f'验证异常: {str(e)}',
+                'error_code': 'SYSTEM_ERROR'
+            }
+    
+    def get_server_file_info(self, file_path: str) -> Dict:
+        """
+        获取服务器文件信息
+        
+        Args:
+            file_path: 文件路径
+            
+        Returns:
+            文件信息字典
+        """
+        try:
+            # 先验证路径
+            validation_result = self.validate_server_file_path(file_path)
+            if not validation_result['success']:
+                return validation_result
+            
+            normalized_path = validation_result['normalized_path']
+            
+            # 获取文件统计信息
+            stat = os.stat(normalized_path)
+            file_size = stat.st_size
+            
+            # 估算行数（快速采样）
+            estimated_rows = self._estimate_file_lines(normalized_path)
+            
+            # 获取文件基本信息
+            file_info = {
+                'success': True,
+                'file_path': normalized_path,
+                'filename': os.path.basename(normalized_path),
+                'file_size': file_size,
+                'file_size_mb': round(file_size / (1024 * 1024), 2),
+                'estimated_rows': estimated_rows,
+                'last_modified': stat.st_mtime,
+                'readable': os.access(normalized_path, os.R_OK),
+                'file_extension': os.path.splitext(normalized_path)[1]
+            }
+            
+            return file_info
+            
+        except Exception as e:
+            self.logger.error(f"获取服务器文件信息异常: {str(e)}")
+            return {
+                'success': False,
+                'message': f'获取文件信息异常: {str(e)}',
+                'error_code': 'SYSTEM_ERROR'
+            }
+    
+    def process_server_file(self, file_path: str, task_id: Optional[str] = None) -> Dict:
+        """
+        处理服务器文件（启动完整迁移流程）
+        
+        Args:
+            file_path: 文件路径
+            task_id: 任务ID（可选）
+            
+        Returns:
+            处理结果
+        """
+        try:
+            # 先验证路径
+            validation_result = self.validate_server_file_path(file_path)
+            if not validation_result['success']:
+                return validation_result
+            
+            normalized_path = validation_result['normalized_path']
+            
+            # 生成任务ID
+            if task_id is None:
+                task_id = f"server_task_{int(time.time())}"
+            
+            # 创建任务
+            task = MigrationTask(
+                task_id=task_id,
+                sql_file=normalized_path,
+                table_name="",
+                status="parsing",
+                created_at=time.time()
+            )
+            self.tasks[task_id] = task
+            self.active_task = task
+            
+            self.logger.info(f"开始处理服务器文件: {normalized_path}")
+            
+            # 解析SQL文件（使用现有逻辑）
+            self._update_progress("正在解析SQL文件...")
+            sample_data = self.sql_parser.extract_sample_data(normalized_path)
+            task.sample_data = sample_data
+            task.table_name = sample_data.get('table_name', 'unknown_table')
+            task.status = "inferring"
+            
+            self.logger.info(f"服务器文件解析完成，表名: {task.table_name}")
+            
+            # AI推断表结构
+            self._update_progress("正在推断表结构...")
+            inference_result = self.schema_engine.infer_table_schema(sample_data)
+            task.inference_result = inference_result
+            task.ddl_statement = inference_result.ddl_statement
+            
+            if inference_result.success:
+                task.status = "waiting_confirm"
+                self.logger.info(f"服务器文件表结构推断成功: {task.table_name}")
+                
+                return {
+                    'success': True,
+                    'task_id': task_id,
+                    'table_name': task.table_name,
+                    'ddl_statement': task.ddl_statement,
+                    'confidence_score': inference_result.confidence_score,
+                    'message': '表结构推断完成，等待用户确认...'
+                }
+            else:
+                task.status = "failed"
+                task.error_message = inference_result.error_message
+                self.logger.error(f"服务器文件表结构推断失败: {inference_result.error_message}")
+                
+                return {
+                    'success': False,
+                    'task_id': task_id,
+                    'message': f'推断失败: {inference_result.error_message}',
+                    'error_code': 'INFERENCE_FAILED'
+                }
+            
+        except Exception as e:
+            self.logger.error(f"处理服务器文件异常: {str(e)}")
+            if task_id and task_id in self.tasks:
+                self.tasks[task_id].status = "failed"
+                self.tasks[task_id].error_message = str(e)
+            
+            return {
+                'success': False,
+                'message': f'处理异常: {str(e)}',
+                'error_code': 'SYSTEM_ERROR'
+            }
+    
+    def _normalize_file_path(self, file_path: str) -> str:
+        """
+        规范化文件路径
+        
+        Args:
+            file_path: 原始文件路径
+            
+        Returns:
+            规范化后的路径
+        """
+        # 规范化路径，解决相对路径和路径遍历问题
+        normalized = os.path.normpath(os.path.abspath(file_path))
+        return normalized
+    
+    def _is_path_safe(self, file_path: str) -> Dict:
+        """
+        检查路径安全性
+        
+        Args:
+            file_path: 文件路径
+            
+        Returns:
+            安全检查结果 {'safe': bool, 'message': str}
+        """
+        try:
+            file_access_config = self.config.get('file_access', {})
+            
+            # 如果禁用路径遍历保护，直接返回安全
+            if not file_access_config.get('enable_path_traversal_protection', True):
+                return {'safe': True, 'message': '路径安全检查已禁用'}
+            
+            # 获取允许访问的目录列表
+            allowed_directories = file_access_config.get('allowed_directories', [])
+            
+            if not allowed_directories:
+                return {'safe': True, 'message': '未配置允许目录白名单'}
+            
+            # 检查文件是否在允许的目录中
+            file_path_abs = os.path.abspath(file_path)
+            
+            for allowed_dir in allowed_directories:
+                allowed_dir_abs = os.path.abspath(allowed_dir)
+                
+                # 检查文件是否在允许的目录或其子目录中
+                try:
+                    os.path.commonpath([file_path_abs, allowed_dir_abs])
+                    if file_path_abs.startswith(allowed_dir_abs + os.sep) or file_path_abs == allowed_dir_abs:
+                        return {'safe': True, 'message': '路径安全检查通过'}
+                except ValueError:
+                    # 不同驱动器的路径会抛出ValueError
+                    continue
+            
+            return {
+                'safe': False,
+                'message': f'文件路径不在允许访问的目录中: {", ".join(allowed_directories)}'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"路径安全检查异常: {str(e)}")
+            return {
+                'safe': False,
+                'message': f'安全检查异常: {str(e)}'
+            }
+    
+    def _estimate_file_lines(self, file_path: str, sample_size: int = 8192) -> int:
+        """
+        估算文件行数
+        
+        Args:
+            file_path: 文件路径
+            sample_size: 采样大小（字节）
+            
+        Returns:
+            估算的行数
+        """
+        try:
+            file_size = os.path.getsize(file_path)
+            
+            if file_size == 0:
+                return 0
+            
+            # 如果文件很小，直接计算行数
+            if file_size <= sample_size:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    return sum(1 for _ in f)
+            
+            # 采样计算平均行长度
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                sample_data = f.read(sample_size)
+                sample_lines = sample_data.count('\n')
+                
+                if sample_lines == 0:
+                    return 1  # 至少有一行
+                
+                # 估算总行数
+                avg_line_length = len(sample_data) / sample_lines
+                estimated_lines = int(file_size / avg_line_length)
+                
+                return max(1, estimated_lines)
+                
+        except Exception as e:
+            self.logger.warning(f"估算文件行数失败: {str(e)}")
+            return 0

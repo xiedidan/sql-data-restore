@@ -159,6 +159,106 @@ class MigrationWebApp:
                 })
             else:
                 return jsonify({'success': False, 'message': '任务不存在'}), 404
+        
+        # ======== 服务器文件路径功能API ========
+        
+        @self.app.route('/validate_path', methods=['POST'])
+        def validate_path():
+            """验证服务器文件路径"""
+            try:
+                data = request.get_json()
+                if not data or 'file_path' not in data:
+                    return jsonify({
+                        'success': False, 
+                        'message': '缺少file_path参数'
+                    }), 400
+                
+                file_path = data['file_path']
+                
+                # 创建临时迁移器实例进行验证
+                from main_controller import OracleDoriseMigrator
+                migrator = OracleDoriseMigrator()
+                
+                result = migrator.validate_server_file_path(file_path)
+                
+                if result['success']:
+                    return jsonify(result)
+                else:
+                    return jsonify(result), 400
+                    
+            except Exception as e:
+                self.logger.error(f"验证服务器文件路径失败: {str(e)}")
+                return jsonify({
+                    'success': False, 
+                    'message': f'验证失败: {str(e)}'
+                }), 500
+        
+        @self.app.route('/file_info', methods=['POST'])
+        def get_file_info():
+            """获取服务器文件信息"""
+            try:
+                data = request.get_json()
+                if not data or 'file_path' not in data:
+                    return jsonify({
+                        'success': False, 
+                        'message': '缺少file_path参数'
+                    }), 400
+                
+                file_path = data['file_path']
+                
+                # 创建临时迁移器实例获取文件信息
+                from main_controller import OracleDoriseMigrator
+                migrator = OracleDoriseMigrator()
+                
+                result = migrator.get_server_file_info(file_path)
+                
+                if result['success']:
+                    return jsonify(result)
+                else:
+                    return jsonify(result), 400
+                    
+            except Exception as e:
+                self.logger.error(f"获取服务器文件信息失败: {str(e)}")
+                return jsonify({
+                    'success': False, 
+                    'message': f'获取文件信息失败: {str(e)}'
+                }), 500
+        
+        @self.app.route('/process_server_file', methods=['POST'])
+        def process_server_file():
+            """处理服务器文件"""
+            try:
+                data = request.get_json()
+                if not data or 'file_path' not in data:
+                    return jsonify({
+                        'success': False, 
+                        'message': '缺少file_path参数'
+                    }), 400
+                
+                file_path = data['file_path']
+                
+                # 生成任务ID
+                task_id = str(uuid.uuid4())
+                
+                # 启动后台处理线程
+                threading.Thread(
+                    target=self._process_server_file,
+                    args=(task_id, file_path)
+                ).start()
+                
+                return jsonify({
+                    'success': True, 
+                    'task_id': task_id,
+                    'file_path': file_path,
+                    'message': '服务器文件处理已启动...'
+                })
+                    
+            except Exception as e:
+                self.logger.error(f"处理服务器文件失败: {str(e)}")
+                return jsonify({
+                    'success': False, 
+                    'message': f'处理失败: {str(e)}'
+                }), 500
     
     def _register_socketio_events(self):
         """注册SocketIO事件"""
@@ -381,7 +481,89 @@ class MigrationWebApp:
                 'error_message': str(e)
             })
     
-    def run(self, host: str = None, port: int = None, debug: bool = None):
+    def _process_server_file(self, task_id: str, file_path: str):
+        """处理服务器文件"""
+        try:
+            # 创建临时迁移器实例
+            from main_controller import OracleDoriseMigrator
+            migrator = OracleDoriseMigrator()
+            
+            # 使用主控制器处理服务器文件
+            result = migrator.process_server_file(file_path, task_id)
+            
+            if result['success']:
+                # 初始化任务状态
+                self.active_tasks[task_id] = {
+                    'task_id': task_id,
+                    'filename': os.path.basename(file_path),
+                    'file_path': file_path,
+                    'table_name': result.get('table_name', ''),
+                    'ddl_statement': result.get('ddl_statement', ''),
+                    'status': 'waiting_confirmation',
+                    'progress': 50,
+                    'created_at': time.time(),
+                    'is_server_file': True  # 标记为服务器文件
+                }
+                
+                # 发送任务开始事件
+                self.socketio.emit('task_started', {
+                    'task_id': task_id,
+                    'message': '开始处理服务器文件...'
+                })
+                
+                # 发送解析完成事件
+                self.socketio.emit('parsing_completed', {
+                    'task_id': task_id,
+                    'table_name': result.get('table_name', ''),
+                    'message': '服务器文件解析完成，开始推断表结构...'
+                })
+                
+                # 发送推断完成事件
+                self.socketio.emit('schema_inferred', {
+                    'task_id': task_id,
+                    'table_name': result.get('table_name', ''),
+                    'ddl_statement': result.get('ddl_statement', ''),
+                    'confidence_score': result.get('confidence_score', 0),
+                    'message': '表结构推断完成，等待用户确认...'
+                })
+                
+            else:
+                # 处理失败
+                self.active_tasks[task_id] = {
+                    'task_id': task_id,
+                    'filename': os.path.basename(file_path),
+                    'file_path': file_path,
+                    'status': 'failed',
+                    'error_message': result.get('message', '未知错误'),
+                    'created_at': time.time(),
+                    'is_server_file': True
+                }
+                
+                # 发送失败事件
+                self.socketio.emit('task_failed', {
+                    'task_id': task_id,
+                    'error_message': result.get('message', '未知错误')
+                })
+                
+        except Exception as e:
+            self.logger.error(f"处理服务器文件异常: {str(e)}")
+            
+            # 初始化失败任务状态
+            self.active_tasks[task_id] = {
+                'task_id': task_id,
+                'filename': os.path.basename(file_path),
+                'file_path': file_path,
+                'status': 'failed',
+                'error_message': str(e),
+                'created_at': time.time(),
+                'is_server_file': True
+            }
+            
+            # 发送失败事件
+            self.socketio.emit('task_failed', {
+                'task_id': task_id,
+                'error_message': str(e)
+            })
         """运行Web应用"""
         web_config = self.config.get('web_interface', {})
         

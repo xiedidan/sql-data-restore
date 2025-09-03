@@ -28,7 +28,25 @@
                 <aside class="sidebar">
                     <!-- 文件上传区域 -->
                     <div class="upload-section">
-                        <h3><i class="fas fa-upload"></i> 文件上传</h3>
+                        <h3><i class="fas fa-upload"></i> 文件输入</h3>
+                                        
+                        <!-- 输入方式选择 -->
+                        <div class="input-mode-selector">
+                            <label class="radio-option">
+                                <input type="radio" name="input-mode" value="upload" checked>
+                                <span class="radio-label">
+                                    <i class="fas fa-cloud-upload-alt"></i> 文件上传
+                                </span>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="input-mode" value="server-path">
+                                <span class="radio-label">
+                                    <i class="fas fa-server"></i> 服务器路径
+                                </span>
+                            </label>
+                        </div>
+                                        
+                        <!-- 文件上传区域 -->
                         <div class="upload-area" id="upload-area">
                             <div class="upload-placeholder">
                                 <i class="fas fa-cloud-upload-alt"></i>
@@ -37,6 +55,58 @@
                                 <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">
                                     选择文件
                                 </button>
+                            </div>
+                        </div>
+                                        
+                        <!-- 服务器路径输入区域 -->
+                        <div class="server-path-area" id="server-path-area" style="display: none;">
+                            <div class="path-input-container">
+                                <div class="input-group">
+                                    <input type="text" id="server-path-input" class="form-control" 
+                                           placeholder="请输入服务器SQL文件路径（如：./uploads/data.sql）">
+                                    <button class="btn btn-secondary" id="validate-path-btn">
+                                        <i class="fas fa-check-circle"></i> 验证路径
+                                    </button>
+                                </div>
+                                                
+                                <!-- 路径建议 -->
+                                <div class="path-suggestions">
+                                    <span class="suggestion-label">常用路径：</span>
+                                    <button class="path-suggestion-btn" data-path="./uploads/">
+                                        <i class="fas fa-folder"></i> ./uploads/
+                                    </button>
+                                    <button class="path-suggestion-btn" data-path="./tests/sample_data/">
+                                        <i class="fas fa-vial"></i> ./tests/sample_data/
+                                    </button>
+                                </div>
+                            </div>
+                                            
+                            <!-- 文件信息显示 -->
+                            <div class="file-info-display" id="file-info-display" style="display: none;">
+                                <div class="file-info-header">
+                                    <h4><i class="fas fa-info-circle"></i> 文件信息</h4>
+                                    <button class="btn btn-success" id="process-server-file-btn">
+                                        <i class="fas fa-play"></i> 开始处理
+                                    </button>
+                                </div>
+                                <div class="file-info-content">
+                                    <div class="info-row">
+                                        <span class="info-label">文件名：</span>
+                                        <span class="info-value" id="file-info-name">-</span>
+                                    </div>
+                                    <div class="info-row">
+                                        <span class="info-label">文件大小：</span>
+                                        <span class="info-value" id="file-info-size">-</span>
+                                    </div>
+                                    <div class="info-row">
+                                        <span class="info-label">估计行数：</span>
+                                        <span class="info-value" id="file-info-rows">-</span>
+                                    </div>
+                                    <div class="info-row">
+                                        <span class="info-label">路径：</span>
+                                        <span class="info-value path-display" id="file-info-path">-</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

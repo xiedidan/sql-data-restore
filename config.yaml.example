@@ -37,6 +37,32 @@ migration:
   enable_user_confirmation: true        # 是否启用用户确认DDL
   temp_dir: "./temp"                    # 临时文件目录
 
+# 文件访问安全配置
+file_access:
+  # 允许访问的目录列表（安全白名单）
+  allowed_directories:
+    - "./uploads"                        # 上传目录
+    - "./tests/sample_data"              # 测试数据目录
+    - "/data/oracle_dumps"               # Oracle数据导出目录（示例）
+    - "/var/migration/sql"               # 迁移SQL文件目录（示例）
+  
+  # 安全设置
+  max_file_size_mb: 2048                # 最大文件大小限制（MB）
+  allowed_extensions: [".sql"]           # 允许的文件扩展名
+  enable_path_traversal_protection: true # 启用路径遍历保护
+  
+  # 性能设置
+  file_info_cache_ttl: 300              # 文件信息缓存时间（秒）
+  max_concurrent_validations: 10        # 最大并发验证数
+  
+  # 路径输入功能
+  enable_server_path_input: true        # 启用服务器路径输入功能
+  path_suggestions:                     # 路径建议列表
+    - "./uploads/"
+    - "./tests/sample_data/"
+    - "/data/oracle_dumps/"
+  max_path_length: 255                  # 最大路径长度
+
 # 日志配置
 logging:
   level: "INFO"                         # 日志级别：DEBUG, INFO, WARNING, ERROR

@@ -15,6 +15,7 @@ class MigrationApp {
         this.initSocketIO();
         this.initEventListeners();
         this.initFileUpload();
+        this.initServerPathFeature();  // 新增：初始化服务器路径功能
         this.loadTasks();
         
         this.log('系统初始化完成', 'info');
@@ -96,6 +97,33 @@ class MigrationApp {
         document.getElementById('clear-logs').addEventListener('click', () => {
             this.clearLogs();
         });
+        
+        // ======== 服务器文件路径功能事件 ========
+        
+        // 路径验证按钮
+        document.getElementById('validate-path-btn').addEventListener('click', () => {
+            this.validateServerPath();
+        });
+        
+        // 处理服务器文件按钮
+        document.getElementById('process-server-file-btn').addEventListener('click', () => {
+            this.processServerFile();
+        });
+        
+        // 路径输入框回车键事件
+        document.getElementById('server-path-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this.validateServerPath();
+            }
+        });
+        
+        // 路径建议按钮事件
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('path-suggestion-btn')) {
+                const path = e.target.getAttribute('data-path');
+                document.getElementById('server-path-input').value = path;
+            }
+        });
     }
     
     // 文件上传初始化
@@ -163,6 +191,196 @@ class MigrationApp {
             this.showModal('上传错误', '网络错误，请重试', 'error');
             this.log(`文件上传错误: ${error.message}`, 'error');
         });
+    }
+    
+    // ======== 服务器文件路径功能 ========
+    
+    // 初始化服务器路径功能
+    initServerPathFeature() {
+        this.currentValidatedFile = null;
+        
+        // 输入方式切换
+        const inputModeRadios = document.querySelectorAll('input[name="input-mode"]');
+        inputModeRadios.forEach(radio => {
+            radio.addEventListener('change', () => {
+                this.switchInputMode(radio.value);
+            });
+        });
+        
+        // 默认显示文件上传模式
+        this.switchInputMode('upload');
+    }
+    
+    // 切换输入模式
+    switchInputMode(mode) {
+        const uploadArea = document.getElementById('upload-area');
+        const serverPathArea = document.getElementById('server-path-area');
+        const fileInfoDisplay = document.getElementById('file-info-display');
+        
+        if (mode === 'upload') {
+            uploadArea.style.display = 'block';
+            serverPathArea.style.display = 'none';
+            fileInfoDisplay.style.display = 'none';
+        } else if (mode === 'server-path') {
+            uploadArea.style.display = 'none';
+            serverPathArea.style.display = 'block';
+            // 保持文件信息显示状态
+        }
+        
+        // 清空已验证的文件信息
+        this.currentValidatedFile = null;
+        
+        this.log(`切换到${mode === 'upload' ? '文件上传' : '服务器路径'}模式`, 'info');
+    }
+    
+    // 验证服务器文件路径
+    async validateServerPath() {
+        const pathInput = document.getElementById('server-path-input');
+        const validateBtn = document.getElementById('validate-path-btn');
+        const fileInfoDisplay = document.getElementById('file-info-display');
+        
+        const filePath = pathInput.value.trim();
+        
+        if (!filePath) {
+            this.showModal('路径验证', '请输入文件路径', 'warning');
+            return;
+        }
+        
+        // 显示加载状态
+        validateBtn.classList.add('loading');
+        validateBtn.disabled = true;
+        
+        try {
+            this.log(`正在验证路径: ${filePath}`, 'info');
+            
+            // 发送验证请求
+            const response = await fetch('/validate_path', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ file_path: filePath })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                this.log('路径验证成功', 'success');
+                
+                // 获取文件信息
+                await this.getServerFileInfo(filePath);
+                
+            } else {
+                this.showModal('路径验证失败', result.message, 'error');
+                this.log(`路径验证失败: ${result.message}`, 'error');
+                fileInfoDisplay.style.display = 'none';
+                this.currentValidatedFile = null;
+            }
+            
+        } catch (error) {
+            this.showModal('验证错误', '网络错误，请重试', 'error');
+            this.log(`路径验证错误: ${error.message}`, 'error');
+            fileInfoDisplay.style.display = 'none';
+            this.currentValidatedFile = null;
+            
+        } finally {
+            // 隐藏加载状态
+            validateBtn.classList.remove('loading');
+            validateBtn.disabled = false;
+        }
+    }
+    
+    // 获取服务器文件信息
+    async getServerFileInfo(filePath) {
+        try {
+            const response = await fetch('/file_info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ file_path: filePath })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                this.displayFileInfo(result);
+                this.currentValidatedFile = result;
+                this.log('文件信息获取成功', 'success');
+                
+            } else {
+                this.showModal('获取文件信息失败', result.message, 'error');
+                this.log(`获取文件信息失败: ${result.message}`, 'error');
+            }
+            
+        } catch (error) {
+            this.showModal('获取信息错误', '网络错误，请重试', 'error');
+            this.log(`获取文件信息错误: ${error.message}`, 'error');
+        }
+    }
+    
+    // 显示文件信息
+    displayFileInfo(fileInfo) {
+        const fileInfoDisplay = document.getElementById('file-info-display');
+        
+        document.getElementById('file-info-name').textContent = fileInfo.filename;
+        document.getElementById('file-info-size').textContent = `${fileInfo.file_size_mb} MB`;
+        document.getElementById('file-info-rows').textContent = fileInfo.estimated_rows.toLocaleString();
+        document.getElementById('file-info-path').textContent = fileInfo.file_path;
+        
+        fileInfoDisplay.style.display = 'block';
+    }
+    
+    // 处理服务器文件
+    async processServerFile() {
+        if (!this.currentValidatedFile) {
+            this.showModal('无效操作', '请先验证文件路径', 'warning');
+            return;
+        }
+        
+        const processBtn = document.getElementById('process-server-file-btn');
+        
+        // 显示加载状态
+        processBtn.classList.add('loading');
+        processBtn.disabled = true;
+        
+        try {
+            this.log(`开始处理服务器文件: ${this.currentValidatedFile.filename}`, 'info');
+            
+            const response = await fetch('/process_server_file', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ file_path: this.currentValidatedFile.file_path })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                this.log(`服务器文件处理已启动: ${result.task_id}`, 'success');
+                
+                // 隐藏文件信息显示，任务将通过SocketIO事件更新
+                document.getElementById('file-info-display').style.display = 'none';
+                
+                // 清空输入框
+                document.getElementById('server-path-input').value = '';
+                this.currentValidatedFile = null;
+                
+            } else {
+                this.showModal('处理失败', result.message, 'error');
+                this.log(`服务器文件处理失败: ${result.message}`, 'error');
+            }
+            
+        } catch (error) {
+            this.showModal('处理错误', '网络错误，请重试', 'error');
+            this.log(`服务器文件处理错误: ${error.message}`, 'error');
+            
+        } finally {
+            // 隐藏加载状态
+            processBtn.classList.remove('loading');
+            processBtn.disabled = false;
+        }
     }
     
     // 加载任务列表
