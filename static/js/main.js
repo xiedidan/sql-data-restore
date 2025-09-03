@@ -67,6 +67,14 @@ class MigrationApp {
             this.handleTaskFailed(data);
         });
         
+        this.socket.on('parsing_progress', (data) => {
+            this.handleParsingProgress(data);
+        });
+        
+        this.socket.on('task_cancelled', (data) => {
+            this.handleTaskCancelled(data);
+        });
+        
         this.socket.on('error', (data) => {
             this.showModal('错误', data.message, 'error');
             this.log(`错误: ${data.message}`, 'error');
@@ -704,6 +712,49 @@ class MigrationApp {
         };
         
         return statusMap[status] || status;
+    }
+    
+    // 新增：处理解析进度事件
+    handleParsingProgress(data) {
+        const stage = data.stage || 'parsing';
+        const message = data.message || '正在处理...';
+        const progress = data.progress || 0;
+        
+        // 显示进度信息
+        this.log(`[解析进度] ${message} (${progress.toFixed(1)}%)`, 'info');
+        
+        // 更新进度条（如果有）
+        if (stage === 'parsing' && progress > 0) {
+            // 可以在这里更新解析进度条
+            this.updateProgress(progress / 2); // 解析阶段占总进度的50%
+        }
+        
+        // 如果检测到表名，显示额外信息
+        if (data.table_name) {
+            this.log(`检测到表名: ${data.table_name}`, 'success');
+        }
+        
+        if (data.estimated_rows) {
+            this.log(`估计行数: ${data.estimated_rows.toLocaleString()}`, 'info');
+        }
+    }
+    
+    // 新增：处理任务取消事件
+    handleTaskCancelled(data) {
+        this.log(`任务已取消: ${data.message}`, 'warning');
+        
+        if (this.currentTask && this.currentTask.task_id === data.task_id) {
+            this.currentTask.status = 'cancelled';
+            this.updateMainPanel();
+        }
+        
+        // 隐藏取消按钮
+        const cancelBtn = document.getElementById('cancel-import');
+        if (cancelBtn) {
+            cancelBtn.style.display = 'none';
+        }
+        
+        this.loadTasks();
     }
     
     log(message, type = 'info') {

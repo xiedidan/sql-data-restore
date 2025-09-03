@@ -330,7 +330,17 @@ class MigrationWebApp:
                 task_id = data.get('task_id')
                 
                 if task_id in self.active_tasks:
+                    # 更新任务状态
                     self.active_tasks[task_id]['status'] = 'cancelled'
+                    
+                    # 尝试取消后端任务（如果正在运行）
+                    try:
+                        from main_controller import OracleDoriseMigrator
+                        migrator = OracleDoriseMigrator()
+                        migrator.cancel_task(task_id)
+                    except Exception as e:
+                        self.logger.warning(f"取消后端任务失败: {str(e)}")
+                    
                     emit('task_cancelled', {
                         'task_id': task_id,
                         'message': '任务已取消'
@@ -488,8 +498,20 @@ class MigrationWebApp:
             from main_controller import OracleDoriseMigrator
             migrator = OracleDoriseMigrator()
             
+            # 定义进度回调函数，将解析进度发送到前端
+            def progress_callback(progress_data):
+                self.socketio.emit('parsing_progress', {
+                    'task_id': task_id,
+                    'stage': progress_data.get('stage', 'parsing'),
+                    'message': progress_data.get('message', ''),
+                    'progress': progress_data.get('progress', 0),
+                    'table_name': progress_data.get('table_name', ''),
+                    'estimated_rows': progress_data.get('estimated_rows', 0),
+                    'file_size_mb': progress_data.get('file_size_mb', 0)
+                })
+            
             # 使用主控制器处理服务器文件
-            result = migrator.process_server_file(file_path, task_id)
+            result = migrator.process_server_file(file_path, task_id, progress_callback=progress_callback)
             
             if result['success']:
                 # 初始化任务状态
@@ -500,7 +522,7 @@ class MigrationWebApp:
                     'table_name': result.get('table_name', ''),
                     'ddl_statement': result.get('ddl_statement', ''),
                     'status': 'waiting_confirmation',
-                    'progress': 50,
+                    'progress': 90,
                     'created_at': time.time(),
                     'is_server_file': True  # 标记为服务器文件
                 }
@@ -529,21 +551,40 @@ class MigrationWebApp:
                 
             else:
                 # 处理失败
-                self.active_tasks[task_id] = {
-                    'task_id': task_id,
-                    'filename': os.path.basename(file_path),
-                    'file_path': file_path,
-                    'status': 'failed',
-                    'error_message': result.get('message', '未知错误'),
-                    'created_at': time.time(),
-                    'is_server_file': True
-                }
-                
-                # 发送失败事件
-                self.socketio.emit('task_failed', {
-                    'task_id': task_id,
-                    'error_message': result.get('message', '未知错误')
-                })
+                error_code = result.get('error_code', 'UNKNOWN_ERROR')
+                if error_code == 'TASK_CANCELLED':
+                    # 任务被取消
+                    self.active_tasks[task_id] = {
+                        'task_id': task_id,
+                        'filename': os.path.basename(file_path),
+                        'file_path': file_path,
+                        'status': 'cancelled',
+                        'error_message': result.get('message', '任务已被取消'),
+                        'created_at': time.time(),
+                        'is_server_file': True
+                    }
+                    
+                    self.socketio.emit('task_cancelled', {
+                        'task_id': task_id,
+                        'message': '任务已被取消'
+                    })
+                else:
+                    # 其他失败
+                    self.active_tasks[task_id] = {
+                        'task_id': task_id,
+                        'filename': os.path.basename(file_path),
+                        'file_path': file_path,
+                        'status': 'failed',
+                        'error_message': result.get('message', '未知错误'),
+                        'created_at': time.time(),
+                        'is_server_file': True
+                    }
+                    
+                    # 发送失败事件
+                    self.socketio.emit('task_failed', {
+                        'task_id': task_id,
+                        'error_message': result.get('message', '未知错误')
+                    })
                 
         except Exception as e:
             self.logger.error(f"处理服务器文件异常: {str(e)}")

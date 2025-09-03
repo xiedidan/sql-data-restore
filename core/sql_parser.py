@@ -31,15 +31,74 @@ class SQLFileParser:
         """
         self.config = config
         self.sample_lines = config.get('migration', {}).get('sample_lines', 100)
+        self.use_fast_parser = config.get('parser', {}).get('use_fast_parser', True)
+        self.fast_parser_threshold = config.get('parser', {}).get('fast_parser_threshold', 50 * 1024 * 1024)  # 50MB
         self.logger = logging.getLogger(__name__)
         
-    def extract_sample_data(self, file_path: str, n_lines: Optional[int] = None) -> Dict:
+        # 用于切换到高性能解析器
+        self._fast_parser = None
+        self._threaded_parser = None
+        
+    def extract_sample_data(self, file_path: str, n_lines: Optional[int] = None, progress_callback: Optional[callable] = None) -> Dict:
+        """
+        提取SQL文件的样本数据（智能选择解析策略）
+        
+        Args:
+            file_path: SQL文件路径
+            n_lines: 要提取的行数，默认使用配置中的值
+            progress_callback: 进度回调函数
+            
+        Returns:
+            包含表名、样本数据等信息的字典
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"SQL文件不存在: {file_path}")
+        
+        file_size = os.path.getsize(file_path)
+        
+        # 智能选择解析策略
+        if self.use_fast_parser and file_size >= self.fast_parser_threshold:
+            return self._extract_with_fast_parser(file_path, n_lines, progress_callback)
+        else:
+            return self._extract_sample_data_legacy(file_path, n_lines, progress_callback)
+    
+    def _extract_with_fast_parser(self, file_path: str, n_lines: Optional[int], progress_callback: Optional[callable]) -> Dict:
+        """使用高性能解析器"""
+        try:
+            # 懒加载高性能解析器
+            if self._fast_parser is None:
+                from .fast_sql_parser import FastSQLParser, ThreadedSQLParser
+                
+                file_size = os.path.getsize(file_path)
+                if file_size > 200 * 1024 * 1024:  # 大于200MB使用多线程
+                    self._threaded_parser = ThreadedSQLParser(self.config)
+                    parser = self._threaded_parser
+                    method = parser.extract_sample_data_threaded
+                else:
+                    self._fast_parser = FastSQLParser(self.config)
+                    parser = self._fast_parser
+                    method = parser.extract_sample_data_fast
+                
+                self.logger.info(f"切换到高性能解析器: {parser.__class__.__name__}")
+                return method(file_path, n_lines, progress_callback)
+            else:
+                return self._fast_parser.extract_sample_data_fast(file_path, n_lines, progress_callback)
+                
+        except ImportError:
+            self.logger.warning("高性能解析器不可用，回退到传统解析")
+            return self._extract_sample_data_legacy(file_path, n_lines, progress_callback)
+        except Exception as e:
+            self.logger.warning(f"高性能解析失败: {str(e)}，回退到传统解析")
+            return self._extract_sample_data_legacy(file_path, n_lines, progress_callback)
+    
+    def _extract_sample_data_legacy(self, file_path: str, n_lines: Optional[int] = None, progress_callback: Optional[callable] = None) -> Dict:
         """
         提取SQL文件的样本数据
         
         Args:
             file_path: SQL文件路径
             n_lines: 要提取的行数，默认使用配置中的值
+            progress_callback: 进度回调函数
             
         Returns:
             包含表名、样本数据等信息的字典
@@ -54,6 +113,16 @@ class SQLFileParser:
             sample_data = []
             table_name = None
             total_lines = 0
+            file_size = os.path.getsize(file_path)
+            
+            # 发送解析开始事件
+            if progress_callback:
+                progress_callback({
+                    'stage': 'parsing',
+                    'message': f'开始解析SQL文件: {os.path.basename(file_path)} ({round(file_size / (1024 * 1024), 2)} MB)',
+                    'progress': 0,
+                    'file_size_mb': round(file_size / (1024 * 1024), 2)
+                })
             
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for i, line in enumerate(f):
@@ -68,9 +137,22 @@ class SQLFileParser:
                             extracted_table = self._extract_table_name_from_line(line)
                             if extracted_table:
                                 table_name = extracted_table
+                                if progress_callback:
+                                    progress_callback({
+                                        'stage': 'parsing',
+                                        'message': f'检测到表名: {table_name}',
+                                        'progress': min(50, (i / n_lines) * 50),
+                                        'table_name': table_name
+                                    })
                     
-                    # 只统计总行数，不全部读取
-                    if i >= n_lines and i % 10000 == 0:
+                    # 只统计总行数，不全部读取，但发送进度更新
+                    if i >= n_lines and i % 50000 == 0:
+                        if progress_callback:
+                            progress_callback({
+                                'stage': 'parsing',
+                                'message': f'正在扫描文件，已处理 {i:,} 行',
+                                'progress': min(90, 50 + (i / max(file_size / 100, 1)) * 40)
+                            })
                         continue
                         
             # 如果没有从INSERT语句中提取到表名，尝试从文件名推断
@@ -78,8 +160,18 @@ class SQLFileParser:
                 table_name = self._extract_table_name_from_filename(file_path)
                 
             # 估算文件大小和行数
-            file_size = os.path.getsize(file_path)
             estimated_rows = self._estimate_total_rows(file_path, sample_data)
+            
+            # 发送解析完成事件
+            if progress_callback:
+                progress_callback({
+                    'stage': 'parsing_completed',
+                    'message': f'解析完成: {table_name or "unknown_table"}, 估计 {estimated_rows:,} 行',
+                    'progress': 100,
+                    'table_name': table_name,
+                    'estimated_rows': estimated_rows,
+                    'sample_lines': len(sample_data)
+                })
             
             self.logger.info(f"成功解析SQL文件: {file_path}, 表名: {table_name}, 样本行数: {len(sample_data)}")
             
@@ -94,6 +186,13 @@ class SQLFileParser:
             
         except Exception as e:
             self.logger.error(f"解析SQL文件失败: {file_path}, 错误: {str(e)}")
+            if progress_callback:
+                progress_callback({
+                    'stage': 'parsing_failed',
+                    'message': f'解析失败: {str(e)}',
+                    'progress': 0,
+                    'error': str(e)
+                })
             raise
     
     def identify_table_name(self, sql_content: str) -> str:

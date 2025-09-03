@@ -6,6 +6,7 @@ AI推断模块
 
 import json
 import logging
+import re
 import requests
 import time
 from typing import Dict, List, Optional
@@ -174,8 +175,6 @@ class SchemaInferenceEngine:
             return ""
             
         # 尝试提取SQL代码块
-        import re
-        
         # 查找```sql 或 ``` 包围的代码块
         sql_patterns = [
             r'```sql\s*(.*?)\s*```',

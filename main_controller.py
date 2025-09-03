@@ -35,7 +35,7 @@ class MigrationTask:
     task_id: str
     sql_file: str
     table_name: str
-    status: str = "pending"  # pending, parsing, inferring, waiting_confirm, confirmed, importing, completed, failed
+    status: str = "pending"  # pending, parsing, inferring, waiting_confirm, confirmed, importing, completed, failed, cancelled
     sample_data: Dict = None
     inference_result: InferenceResult = None
     ddl_statement: str = ""
@@ -43,6 +43,7 @@ class MigrationTask:
     created_at: float = 0
     completed_at: float = 0
     error_message: str = ""
+    cancelled: bool = False  # 新增取消标志
 
 class OracleDoriseMigrator:
     """Oracle到Doris迁移器主控制器"""
@@ -487,9 +488,46 @@ class OracleDoriseMigrator:
     
     def _update_progress(self, message: str):
         """更新进度"""
+        # 检查是否被取消
+        if self.active_task and self.active_task.cancelled:
+            raise InterruptedError("任务已被取消")
+            
         self.logger.info(message)
         if self.progress_callback:
-            self.progress_callback(message)
+            # 如果是可调用对象，传递结构化数据
+            if isinstance(message, str):
+                self.progress_callback({
+                    'stage': 'processing',
+                    'message': message,
+                    'progress': 0
+                })
+            else:
+                # message 本身就是结构化数据
+                self.progress_callback(message)
+    
+    def cancel_task(self, task_id: str) -> bool:
+        """
+        取消任务
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            是否成功取消
+        """
+        if task_id in self.tasks:
+            task = self.tasks[task_id]
+            task.cancelled = True
+            task.status = "cancelled"
+            task.completed_at = time.time()
+            
+            # 如果是当前活动任务，也标记为取消
+            if self.active_task and self.active_task.task_id == task_id:
+                self.active_task.cancelled = True
+                
+            self.logger.info(f"任务已取消: {task_id}")
+            return True
+        return False
     
     def _progress_callback_wrapper(self, progress_data: Dict):
         """进度回调包装器"""
@@ -667,18 +705,27 @@ class OracleDoriseMigrator:
                 'error_code': 'SYSTEM_ERROR'
             }
     
-    def process_server_file(self, file_path: str, task_id: Optional[str] = None) -> Dict:
+    def process_server_file(self, file_path: str, task_id: Optional[str] = None, progress_callback: Optional[Callable] = None) -> Dict:
         """
         处理服务器文件（启动完整迁移流程）
         
         Args:
             file_path: 文件路径
             task_id: 任务ID（可选）
+            progress_callback: 进度回调函数（可选）
             
         Returns:
             处理结果
         """
         try:
+            # 检查任务是否被取消
+            if task_id and task_id in self.tasks and self.tasks[task_id].cancelled:
+                return {
+                    'success': False,
+                    'message': '任务已被取消',
+                    'error_code': 'TASK_CANCELLED'
+                }
+            
             # 先验证路径
             validation_result = self.validate_server_file_path(file_path)
             if not validation_result['success']:
@@ -703,9 +750,18 @@ class OracleDoriseMigrator:
             
             self.logger.info(f"开始处理服务器文件: {normalized_path}")
             
-            # 解析SQL文件（使用现有逻辑）
+            # 解析SQL文件（使用带进度回调的版本）
             self._update_progress("正在解析SQL文件...")
-            sample_data = self.sql_parser.extract_sample_data(normalized_path)
+            sample_data = self.sql_parser.extract_sample_data(normalized_path, progress_callback=progress_callback)
+            
+            # 检查是否被取消
+            if task.cancelled:
+                return {
+                    'success': False,
+                    'message': '任务在解析过程中被取消',
+                    'error_code': 'TASK_CANCELLED'
+                }
+            
             task.sample_data = sample_data
             task.table_name = sample_data.get('table_name', 'unknown_table')
             task.status = "inferring"
@@ -714,6 +770,14 @@ class OracleDoriseMigrator:
             
             # AI推断表结构
             self._update_progress("正在推断表结构...")
+            
+            # 检查是否被取消
+            if task.cancelled:
+                return {
+                    'success': False,
+                    'message': '任务在推断过程中被取消',
+                    'error_code': 'TASK_CANCELLED'
+                }
             inference_result = self.schema_engine.infer_table_schema(sample_data)
             task.inference_result = inference_result
             task.ddl_statement = inference_result.ddl_statement
@@ -741,6 +805,19 @@ class OracleDoriseMigrator:
                     'message': f'推断失败: {inference_result.error_message}',
                     'error_code': 'INFERENCE_FAILED'
                 }
+            
+        except InterruptedError as e:
+            # 任务被取消的异常
+            self.logger.info(f"服务器文件处理被取消: {task_id}")
+            if task_id and task_id in self.tasks:
+                self.tasks[task_id].status = "cancelled"
+                self.tasks[task_id].error_message = "任务已被取消"
+            
+            return {
+                'success': False,
+                'message': '任务已被取消',
+                'error_code': 'TASK_CANCELLED'
+            }
             
         except Exception as e:
             self.logger.error(f"处理服务器文件异常: {str(e)}")
