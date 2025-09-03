@@ -38,8 +38,8 @@ class MigrationWebApp:
         
         # 初始化Flask应用
         self.app = Flask(__name__, 
-                         template_folder='../../templates',
-                         static_folder='../../static')
+                         template_folder='../templates',
+                         static_folder='../static')
         self.app.config['SECRET_KEY'] = self.config.get('web_interface', {}).get('secret_key', 'dev_secret_key')
         
         # 初始化SocketIO
