@@ -392,11 +392,14 @@ class MigrationApp {
     }
     
     // 加载任务列表
-    loadTasks() {
+    loadTasks(callback) {
         fetch('/tasks')
         .then(response => response.json())
         .then(data => {
             this.updateTaskList(data.tasks);
+            if (callback) {
+                callback(data.tasks);
+            }
         })
         .catch(error => {
             this.log(`加载任务列表失败: ${error.message}`, 'error');
@@ -496,11 +499,24 @@ class MigrationApp {
         document.getElementById('table-name').textContent = this.currentTask.table_name || '-';
         document.getElementById('confidence-score').textContent = 
             this.currentTask.confidence_score ? `${(this.currentTask.confidence_score * 100).toFixed(1)}%` : '-';
+        
+        // 优先从任务中获取estimated_rows，如果没有则从 sample_data 中获取
+        const estimatedRows = this.currentTask.estimated_rows || 
+                             (this.currentTask.sample_data && this.currentTask.sample_data.estimated_rows);
         document.getElementById('estimated-rows').textContent = 
-            this.currentTask.estimated_rows?.toLocaleString() || '-';
+            estimatedRows ? estimatedRows.toLocaleString() : '-';
         
         const ddlEditor = document.getElementById('ddl-editor');
         ddlEditor.value = this.currentTask.ddl_statement || '';
+        
+        // 输出调试信息
+        console.log('DDL Editor - Current Task:', {
+            table_name: this.currentTask.table_name,
+            ddl_statement: this.currentTask.ddl_statement,
+            confidence_score: this.currentTask.confidence_score,
+            estimated_rows: estimatedRows,
+            status: this.currentTask.status
+        });
     }
     
     // 显示进度监控
@@ -605,7 +621,17 @@ class MigrationApp {
     // SocketIO事件处理器
     handleTaskStarted(data) {
         this.log(`任务开始: ${data.message}`, 'info');
-        this.loadTasks();
+        
+        // 加载任务列表，并可能自动选择新任务
+        this.loadTasks(() => {
+            // 如果当前没有选中任务，尝试选择最新的任务
+            if (!this.currentTask && data.task_id) {
+                const task = this.tasks.get(data.task_id);
+                if (task) {
+                    this.selectTask(data.task_id);
+                }
+            }
+        });
     }
     
     handleParsingCompleted(data) {
@@ -616,15 +642,24 @@ class MigrationApp {
     handleSchemaInferred(data) {
         this.log(`推断完成: ${data.message}`, 'success');
         
-        // 更新当前任务
+        // 自动选择新推断完成的任务为当前任务
+        this.loadTasks(() => {
+            // 在任务加载完成后，选择该任务
+            const task = this.tasks.get(data.task_id);
+            if (task) {
+                this.selectTask(data.task_id);
+                this.log(`自动选择任务: ${task.table_name || task.filename}`, 'info');
+            }
+        });
+        
+        // 如果当前任务是该任务，立即更新
         if (this.currentTask && this.currentTask.task_id === data.task_id) {
             this.currentTask.status = 'waiting_confirmation';
             this.currentTask.ddl_statement = data.ddl_statement;
             this.currentTask.confidence_score = data.confidence_score;
+            this.currentTask.table_name = data.table_name;
             this.updateMainPanel();
         }
-        
-        this.loadTasks();
     }
     
     handleDDLConfirmed(data) {

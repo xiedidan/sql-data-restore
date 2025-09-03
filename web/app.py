@@ -143,7 +143,13 @@ class MigrationWebApp:
                         'status': task_info['status'],
                         'table_name': task_info.get('table_name', ''),
                         'filename': task_info.get('filename', ''),
-                        'progress': task_info.get('progress', 0)
+                        'progress': task_info.get('progress', 0),
+                        'ddl_statement': task_info.get('ddl_statement', ''),
+                        'confidence_score': task_info.get('confidence_score', 0),
+                        'estimated_rows': task_info.get('estimated_rows', 0),
+                        'sample_data': task_info.get('sample_data', {}),
+                        'created_at': task_info.get('created_at', 0),
+                        'is_server_file': task_info.get('is_server_file', False)
                     }
                     for task_id, task_info in self.active_tasks.items()
                 ]
@@ -396,6 +402,8 @@ class MigrationWebApp:
             self.active_tasks[task_id].update({
                 'inference_result': inference_result,
                 'ddl_statement': inference_result.ddl_statement,
+                'confidence_score': inference_result.confidence_score,
+                'estimated_rows': sample_data.get('estimated_rows', 0),
                 'status': 'waiting_confirmation',
                 'progress': 50
             })
@@ -521,6 +529,8 @@ class MigrationWebApp:
                     'file_path': file_path,
                     'table_name': result.get('table_name', ''),
                     'ddl_statement': result.get('ddl_statement', ''),
+                    'confidence_score': result.get('confidence_score', 0),
+                    'estimated_rows': result.get('estimated_rows', 0),
                     'status': 'waiting_confirmation',
                     'progress': 90,
                     'created_at': time.time(),
