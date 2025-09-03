@@ -112,6 +112,9 @@ class SchemaInferenceEngine:
             
             ddl_statement = self.parse_ddl_response(api_response)
             
+            # 清理和替换数据库名称
+            ddl_statement = self._clean_database_references(ddl_statement)
+            
             # 验证DDL语句
             if progress_callback:
                 progress_callback({
@@ -387,6 +390,8 @@ SQL样本:
 4. 添加必要的主键或分布列（Duplicate Key模型）
 5. 考虑数据的业务含义选择合适的类型
 6. 请只返回CREATE TABLE语句，不要包含额外的解释
+7. 重要：不要在DDL语句中包含任何数据库名称，只创建表结构
+8. 不要使用USE语句或数据库限定符
 
 请直接返回DDL语句:
 """
@@ -418,3 +423,39 @@ PROPERTIES (
         
         self.logger.info(f"使用备用DDL方案为表 {table_name}")
         return ddl
+    
+    def _clean_database_references(self, ddl_statement: str) -> str:
+        """
+        清理DDL语句中的数据库名称引用
+        
+        Args:
+            ddl_statement: 原始DDL语句
+            
+        Returns:
+            清理后的DDL语句
+        """
+        if not ddl_statement:
+            return ddl_statement
+            
+        # 移除USE语句
+        ddl_statement = re.sub(r'USE\s+\w+\s*;?\s*', '', ddl_statement, flags=re.IGNORECASE)
+        
+        # 移除数据库名称限定符（如 database.table_name）
+        # 保留表名，移除数据库前缀
+        ddl_statement = re.sub(r'CREATE\s+TABLE\s+\w+\.', 'CREATE TABLE ', ddl_statement, flags=re.IGNORECASE)
+        
+        # 移除常见的Oracle数据库名称引用
+        oracle_db_patterns = [
+            r'\[?EMR_HIS\]?\.',  # [EMR_HIS].table_name 或 EMR_HIS.table_name
+            r'EMR_HIS\s*\.',      # EMR_HIS .table_name
+            r'\[EMR_HIS\]',       # [EMR_HIS]
+        ]
+        
+        for pattern in oracle_db_patterns:
+            ddl_statement = re.sub(pattern, '', ddl_statement, flags=re.IGNORECASE)
+        
+        # 清理多余的空格
+        ddl_statement = re.sub(r'\s+', ' ', ddl_statement)
+        ddl_statement = ddl_statement.strip()
+        
+        return ddl_statement

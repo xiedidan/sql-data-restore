@@ -102,10 +102,13 @@ class DorisConnection:
         start_time = time.time()
         
         try:
+            # 清理DDL语句中的数据库名称引用
+            cleaned_ddl = self._clean_ddl_database_references(ddl_statement)
+            
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    # 执行DDL语句
-                    cursor.execute(ddl_statement)
+                    # 执行清理后的DDL语句
+                    cursor.execute(cleaned_ddl)
                     conn.commit()
                     
                     execution_time = time.time() - start_time
@@ -231,6 +234,80 @@ class DorisConnection:
         except Exception as e:
             self.logger.error(f"检查表存在性失败: {str(e)}")
             return False
+    
+    def _clean_ddl_database_references(self, ddl_statement: str) -> str:
+        """
+        清理DDL语句中的数据库名称引用
+        
+        Args:
+            ddl_statement: 原始DDL语句
+            
+        Returns:
+            清理后的DDL语句
+        """
+        if not ddl_statement:
+            return ddl_statement
+            
+        import re
+        
+        # 移除USE语句
+        ddl_statement = re.sub(r'USE\s+\w+\s*;?\s*', '', ddl_statement, flags=re.IGNORECASE)
+        
+        # 移除数据库名称限定符（如 database.table_name）
+        # 保留表名，移除数据库前缀
+        ddl_statement = re.sub(r'CREATE\s+TABLE\s+\w+\.', 'CREATE TABLE ', ddl_statement, flags=re.IGNORECASE)
+        
+        # 移除常见的Oracle数据库名称引用
+        oracle_db_patterns = [
+            r'\[?EMR_HIS\]?\.',  # [EMR_HIS].table_name 或 EMR_HIS.table_name
+            r'EMR_HIS\s*\.',      # EMR_HIS .table_name
+            r'\[EMR_HIS\]',       # [EMR_HIS]
+        ]
+        
+        for pattern in oracle_db_patterns:
+            ddl_statement = re.sub(pattern, '', ddl_statement, flags=re.IGNORECASE)
+        
+        # 清理多余的空格
+        ddl_statement = re.sub(r'\s+', ' ', ddl_statement)
+        ddl_statement = ddl_statement.strip()
+        
+        self.logger.debug(f"DDL语句清理完成")
+        return ddl_statement
+    
+    def _clean_insert_database_references(self, insert_statement: str) -> str:
+        """
+        清理INSERT语句中的数据库名称引用
+        
+        Args:
+            insert_statement: 原始INSERT语句
+            
+        Returns:
+            清理后的INSERT语句
+        """
+        if not insert_statement:
+            return insert_statement
+            
+        import re
+        
+        # 移除数据库名称限定符（如 database.table_name）
+        # 保留表名，移除数据库前缀
+        insert_statement = re.sub(r'INSERT\s+INTO\s+\w+\.', 'INSERT INTO ', insert_statement, flags=re.IGNORECASE)
+        
+        # 移除常见的Oracle数据库名称引用
+        oracle_db_patterns = [
+            r'\[?EMR_HIS\]?\.',  # [EMR_HIS].table_name 或 EMR_HIS.table_name
+            r'EMR_HIS\s*\.',      # EMR_HIS .table_name
+            r'\[EMR_HIS\]',       # [EMR_HIS]
+        ]
+        
+        for pattern in oracle_db_patterns:
+            insert_statement = re.sub(pattern, '', insert_statement, flags=re.IGNORECASE)
+        
+        # 清理多余的空格
+        insert_statement = re.sub(r'\s+', ' ', insert_statement)
+        insert_statement = insert_statement.strip()
+        
+        return insert_statement
     
     def get_table_row_count(self, table_name: str) -> int:
         """

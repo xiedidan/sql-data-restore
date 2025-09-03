@@ -403,6 +403,8 @@ class ParallelImporter:
         
         # 确保只包含INSERT语句
         if cleaned_statement.upper().strip().startswith('INSERT'):
+            # 清理数据库名称引用
+            cleaned_statement = self._clean_database_references_in_insert(cleaned_statement)
             return cleaned_statement
         else:
             return ""
@@ -476,3 +478,38 @@ class ParallelImporter:
                 self.logger.error(f"重试异常: {chunk_file}, 错误: {str(e)}")
         
         return success_count == len(failed_chunks)
+    
+    def _clean_database_references_in_insert(self, insert_statement: str) -> str:
+        """
+        清理INSERT语句中的数据库名称引用
+        
+        Args:
+            insert_statement: 原始INSERT语句
+            
+        Returns:
+            清理后的INSERT语句
+        """
+        if not insert_statement:
+            return insert_statement
+            
+        import re
+        
+        # 移除数据库名称限定符（如 database.table_name）
+        # 保留表名，移除数据库前缀
+        insert_statement = re.sub(r'INSERT\s+INTO\s+\w+\.', 'INSERT INTO ', insert_statement, flags=re.IGNORECASE)
+        
+        # 移除常见的Oracle数据库名称引用
+        oracle_db_patterns = [
+            r'\[?EMR_HIS\]?\.',  # [EMR_HIS].table_name 或 EMR_HIS.table_name
+            r'EMR_HIS\s*\.',      # EMR_HIS .table_name
+            r'\[EMR_HIS\]',       # [EMR_HIS]
+        ]
+        
+        for pattern in oracle_db_patterns:
+            insert_statement = re.sub(pattern, '', insert_statement, flags=re.IGNORECASE)
+        
+        # 清理多余的空格
+        insert_statement = re.sub(r'\s+', ' ', insert_statement)
+        insert_statement = insert_statement.strip()
+        
+        return insert_statement
