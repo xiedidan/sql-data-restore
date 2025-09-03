@@ -564,6 +564,8 @@ class MigrationWebApp:
                 'task_id': task_id,
                 'error_message': str(e)
             })
+    
+    def run(self, host: str = None, port: int = None, debug: bool = None):
         """运行Web应用"""
         web_config = self.config.get('web_interface', {})
         
