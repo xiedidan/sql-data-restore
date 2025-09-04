@@ -825,3 +825,34 @@ class DorisConnection:
         if self.use_connection_pool and self._connection_pool:
             self._connection_pool.close_all_connections()
         # 单一连接模式下，连接在上下文管理器中自动关闭
+    
+    def create_database_if_not_exists(self) -> bool:
+        """
+        创建数据库（如果不存在）
+        
+        Returns:
+            是否成功
+        """
+        try:
+            # 先连接到MySQL系统数据库来创建数据库
+            connection = pymysql.connect(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database='information_schema',  # 使用information_schema数据库
+                charset=self.charset,
+                autocommit=True
+            )
+            
+            with connection.cursor() as cursor:
+                # 创建数据库
+                cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{self.database}`")
+                
+            connection.close()
+            self.logger.info(f"数据库 {self.database} 创建成功或已存在")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"创建数据库失败: {str(e)}")
+            return False
