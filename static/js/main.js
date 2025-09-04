@@ -213,6 +213,7 @@ class MigrationApp {
     }
     
     // SocketIO初始化
+    initSocketIO() {
         // 配置SocketIO选项
         const socketOptions = {
             transports: ['polling', 'websocket'],  // 允许多种传输方式
