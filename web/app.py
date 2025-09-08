@@ -921,44 +921,7 @@ class MigrationWebApp:
                 'error_message': str(e)
             })
     
-    def run(self, host: str = None, port: int = None, debug: bool = None):
-        """运行Web应用"""
-        web_config = self.config.get('web_interface', {})
-        
-        host = host or web_config.get('host', '0.0.0.0')
-        port = port or web_config.get('port', 5000)
-        debug = debug if debug is not None else web_config.get('debug', False)
-        
-        self.logger.info(f"启动Web应用: http://{host}:{port}")
-        
-        self.socketio.run(
-            self.app,
-            host=host,
-            port=port,
-            debug=debug,
-            allow_unsafe_werkzeug=True
-        )  
-              'success': import_result.success,
-                'affected_rows': import_result.affected_rows,
-                'execution_time': import_result.execution_time,
-                'message': '数据导入完成' if import_result.success else f'数据导入失败: {import_result.error_message}'
-            })
-            
-            # 更新任务时间戳
-            task_info['last_update'] = time.time()
-            
-        except Exception as e:
-            self.logger.error(f"建表和导入数据失败: {str(e)}")
-            self.active_tasks[task_id].update({
-                'status': 'failed',
-                'error_message': str(e),
-                'last_update': time.time()
-            })
-            
-            self.socketio.emit('task_failed', {
-                'task_id': task_id,
-                'error_message': str(e)
-            })
+
     
     def _process_server_file(self, task_id: str, file_path: str, target_database: str = None):
         """处理服务器文件"""

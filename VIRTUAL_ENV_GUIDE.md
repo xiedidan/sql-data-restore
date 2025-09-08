@@ -18,11 +18,18 @@
 ### 方案2: 使用虚拟环境专用启动脚本
 
 ```bash
-# 给脚本添加执行权限
-chmod +x start-venv.sh
+# 方法1: 使用bash运行（推荐）
+bash start-venv.sh
 
-# 运行虚拟环境专用启动脚本
+# 方法2: 给脚本添加执行权限后直接运行
+chmod +x start-venv.sh
 ./start-venv.sh
+
+# 方法3: 使用POSIX兼容版本（如果遇到语法问题）
+chmod +x start-venv-posix.sh
+./start-venv-posix.sh
+# 或
+sh start-venv-posix.sh
 ```
 
 ### 方案3: 使用Python直接启动
