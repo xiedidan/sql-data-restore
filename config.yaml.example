@@ -3,6 +3,9 @@
 
 # 数据库连接配置
 database:
+  # 目标数据库类型选择: doris 或 postgresql
+  target_type: "doris"                  # 可选值: "doris", "postgresql"
+  
   doris:
     host: "localhost"                    # Doris FE节点地址
     port: 9030                          # Doris查询端口
@@ -10,6 +13,13 @@ database:
     password: ""                        # 数据库密码
     database: "migration_db"            # 目标数据库名
     charset: "utf8mb4"                  # 字符集
+  
+  postgresql:
+    host: "localhost"                    # PostgreSQL服务器地址
+    port: 5432                          # PostgreSQL端口
+    user: "postgres"                    # 数据库用户名
+    password: ""                        # 数据库密码
+    database: "migration_db"            # 目标数据库名
 
 # DeepSeek AI配置
 deepseek:

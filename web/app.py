@@ -20,7 +20,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.sql_parser import SQLFileParser
 from core.schema_inference import SchemaInferenceEngine
-from core.doris_connection import DorisConnection
+from core.database_factory import DatabaseConnectionFactory
 from core.parallel_importer import ParallelImporter
 
 class MigrationWebApp:
@@ -56,10 +56,16 @@ class MigrationWebApp:
         # 根据配置初始化SocketIO
         self.socketio = self._init_socketio()
         
+        # 验证数据库配置
+        config_validation = DatabaseConnectionFactory.validate_config(self.config)
+        if not config_validation['valid']:
+            raise ValueError(f"数据库配置错误: {config_validation['message']}")
+        
         # 初始化核心组件
         self.sql_parser = SQLFileParser(self.config)
         self.schema_engine = SchemaInferenceEngine(self.config)
-        self.db_connection = DorisConnection(self.config)
+        self.db_connection = DatabaseConnectionFactory.create_connection(self.config)
+        self.target_db_type = config_validation['target_type']
         
         # 任务管理
         self.active_tasks = {}
@@ -162,10 +168,13 @@ class MigrationWebApp:
                     # 生成任务ID
                     task_id = str(uuid.uuid4())
                     
+                    # 获取目标数据库类型
+                    target_database = request.form.get('target_database', self.target_db_type)
+                    
                     # 启动后台处理
                     threading.Thread(
                         target=self._process_uploaded_file,
-                        args=(task_id, file_path, filename)
+                        args=(task_id, file_path, filename, target_database)
                     ).start()
                     
                     return jsonify({
@@ -375,8 +384,8 @@ class MigrationWebApp:
                 file_path = data['file_path']
                 
                 # 创建临时迁移器实例进行验证
-                from main_controller import OracleDoriseMigrator
-                migrator = OracleDoriseMigrator()
+                from main_controller import OracleToDbMigrator
+                migrator = OracleToDbMigrator()
                 
                 result = migrator.validate_server_file_path(file_path)
                 
@@ -406,8 +415,8 @@ class MigrationWebApp:
                 file_path = data['file_path']
                 
                 # 创建临时迁移器实例获取文件信息
-                from main_controller import OracleDoriseMigrator
-                migrator = OracleDoriseMigrator()
+                from main_controller import OracleToDbMigrator
+                migrator = OracleToDbMigrator()
                 
                 result = migrator.get_server_file_info(file_path)
                 
@@ -435,6 +444,7 @@ class MigrationWebApp:
                     }), 400
                 
                 file_path = data['file_path']
+                target_database = data.get('target_database', self.target_db_type)
                 
                 # 生成任务ID
                 task_id = str(uuid.uuid4())
@@ -442,7 +452,7 @@ class MigrationWebApp:
                 # 启动后台处理线程
                 threading.Thread(
                     target=self._process_server_file,
-                    args=(task_id, file_path)
+                    args=(task_id, file_path, target_database)
                 ).start()
                 
                 return jsonify({
@@ -458,6 +468,62 @@ class MigrationWebApp:
                     'success': False, 
                     'message': f'处理失败: {str(e)}'
                 }), 500
+        
+        @self.app.route('/api/database/types')
+        def get_database_types():
+            """获取支持的数据库类型"""
+            try:
+                return jsonify({
+                    'success': True,
+                    'types': DatabaseConnectionFactory.get_supported_types(),
+                    'current_type': self.target_db_type
+                })
+            except Exception as e:
+                return jsonify({'success': False, 'message': str(e)}), 500
+        
+        @self.app.route('/api/database/config')
+        def get_database_config():
+            """获取当前数据库配置信息"""
+            try:
+                config_validation = DatabaseConnectionFactory.validate_config(self.config)
+                return jsonify({
+                    'success': True,
+                    'target_type': config_validation['target_type'],
+                    'valid': config_validation['valid'],
+                    'message': config_validation['message']
+                })
+            except Exception as e:
+                return jsonify({'success': False, 'message': str(e)}), 500
+        
+        @self.app.route('/api/database/switch', methods=['POST'])
+        def switch_database():
+            """切换数据库类型（需要重启应用生效）"""
+            try:
+                data = request.get_json()
+                target_type = data.get('target_type')
+                
+                if target_type not in DatabaseConnectionFactory.get_supported_types():
+                    return jsonify({
+                        'success': False, 
+                        'message': f'不支持的数据库类型: {target_type}'
+                    }), 400
+                
+                # 更新配置中的目标数据库类型
+                self.config.setdefault('database', {})['target_type'] = target_type
+                
+                # 验证新配置
+                config_validation = DatabaseConnectionFactory.validate_config(self.config)
+                
+                return jsonify({
+                    'success': True,
+                    'message': f'数据库类型已切换为 {target_type.upper()}，重启应用后生效',
+                    'target_type': target_type,
+                    'config_valid': config_validation['valid'],
+                    'config_message': config_validation['message']
+                })
+                
+            except Exception as e:
+                return jsonify({'success': False, 'message': str(e)}), 500
     
     def _register_socketio_events(self):
         """注册SocketIO事件"""
@@ -552,8 +618,8 @@ class MigrationWebApp:
                     
                     # 尝试取消后端任务（如果正在运行）
                     try:
-                        from main_controller import OracleDoriseMigrator
-                        migrator = OracleDoriseMigrator()
+                        from main_controller import OracleToDbMigrator
+                        migrator = OracleToDbMigrator()
                         migrator.cancel_task(task_id)
                     except Exception as e:
                         self.logger.warning(f"取消后端任务失败: {str(e)}")
@@ -569,14 +635,21 @@ class MigrationWebApp:
                 self.logger.error(f"取消任务失败: {str(e)}")
                 emit('error', {'message': str(e)})
     
-    def _process_uploaded_file(self, task_id: str, file_path: str, filename: str):
+    def _process_uploaded_file(self, task_id: str, file_path: str, filename: str, target_database: str = None):
         """处理上传的文件"""
         try:
+            # 使用指定的数据库类型或默认类型
+            if target_database is None:
+                target_database = self.target_db_type
+            
+            self.logger.info(f"处理文件 {filename}，目标数据库: {target_database.upper()}")
+            
             # 初始化任务状态
             self.active_tasks[task_id] = {
                 'task_id': task_id,
                 'filename': filename,
                 'file_path': file_path,
+                'target_database': target_database,
                 'status': 'parsing',
                 'progress': 0,
                 'created_at': time.time()
@@ -724,12 +797,18 @@ class MigrationWebApp:
                 'error_message': str(e)
             })
     
-    def _process_server_file(self, task_id: str, file_path: str):
+    def _process_server_file(self, task_id: str, file_path: str, target_database: str = None):
         """处理服务器文件"""
         try:
+            # 使用指定的数据库类型或默认类型
+            if target_database is None:
+                target_database = self.target_db_type
+            
+            self.logger.info(f"处理服务器文件 {file_path}，目标数据库: {target_database.upper()}")
+            
             # 创建临时迁移器实例
-            from main_controller import OracleDoriseMigrator
-            migrator = OracleDoriseMigrator()
+            from main_controller import OracleToDbMigrator
+            migrator = OracleToDbMigrator()
             
             # 定义进度回调函数，将解析进度发送到前端
             def progress_callback(progress_data):
@@ -752,6 +831,7 @@ class MigrationWebApp:
                     'task_id': task_id,
                     'filename': os.path.basename(file_path),
                     'file_path': file_path,
+                    'target_database': target_database,
                     'table_name': result.get('table_name', ''),
                     'ddl_statement': result.get('ddl_statement', ''),
                     'confidence_score': result.get('confidence_score', 0),
@@ -857,4 +937,165 @@ class MigrationWebApp:
             port=port,
             debug=debug,
             allow_unsafe_werkzeug=True
-        )
+        )  
+              'success': import_result.success,
+                'affected_rows': import_result.affected_rows,
+                'execution_time': import_result.execution_time,
+                'message': '数据导入完成' if import_result.success else f'数据导入失败: {import_result.error_message}'
+            })
+            
+            # 更新任务时间戳
+            task_info['last_update'] = time.time()
+            
+        except Exception as e:
+            self.logger.error(f"建表和导入数据失败: {str(e)}")
+            self.active_tasks[task_id].update({
+                'status': 'failed',
+                'error_message': str(e),
+                'last_update': time.time()
+            })
+            
+            self.socketio.emit('task_failed', {
+                'task_id': task_id,
+                'error_message': str(e)
+            })
+    
+    def _process_server_file(self, task_id: str, file_path: str, target_database: str = None):
+        """处理服务器文件"""
+        try:
+            # 使用指定的数据库类型或默认类型
+            if target_database is None:
+                target_database = self.target_db_type
+            
+            self.logger.info(f"处理服务器文件 {file_path}，目标数据库: {target_database.upper()}")
+            
+            # 初始化任务状态
+            self.active_tasks[task_id] = {
+                'task_id': task_id,
+                'filename': os.path.basename(file_path),
+                'file_path': file_path,
+                'target_database': target_database,
+                'status': 'parsing',
+                'progress': 0,
+                'created_at': time.time(),
+                'is_server_file': True
+            }
+            
+            # 发送开始解析事件
+            self.socketio.emit('task_started', {
+                'task_id': task_id,
+                'message': '开始解析服务器SQL文件...'
+            })
+            
+            # 解析SQL文件
+            sample_data = self.sql_parser.extract_sample_data(file_path)
+            table_name = sample_data.get('table_name', 'unknown_table')
+            
+            self.active_tasks[task_id].update({
+                'table_name': table_name,
+                'sample_data': sample_data,
+                'status': 'inferring',
+                'progress': 20,
+                'last_update': time.time()
+            })
+            
+            # 发送解析完成事件
+            self.socketio.emit('parsing_completed', {
+                'task_id': task_id,
+                'table_name': table_name,
+                'sample_data': sample_data,
+                'message': '服务器SQL文件解析完成，开始推断表结构...'
+            })
+            
+            # AI推断表结构
+            def inference_progress_callback(progress_data):
+                self.socketio.emit('inference_progress', {
+                    'task_id': task_id,
+                    'stage': progress_data.get('stage', 'inference'),
+                    'message': progress_data.get('message', '正在推断...'),
+                    'progress': progress_data.get('progress', 0),
+                    'inference_stage': progress_data.get('stage', ''),
+                    'table_name': table_name
+                })
+            
+            inference_result = self.schema_engine.infer_table_schema(sample_data, inference_progress_callback)
+            
+            self.active_tasks[task_id].update({
+                'inference_result': inference_result,
+                'ddl_statement': inference_result.ddl_statement,
+                'confidence_score': inference_result.confidence_score,
+                'estimated_rows': sample_data.get('estimated_rows', 0),
+                'status': 'waiting_confirmation',
+                'progress': 50,
+                'last_update': time.time()
+            })
+            
+            # 发送推断完成事件
+            self.socketio.emit('schema_inferred', {
+                'task_id': task_id,
+                'table_name': table_name,
+                'ddl_statement': inference_result.ddl_statement,
+                'confidence_score': inference_result.confidence_score,
+                'message': '表结构推断完成，等待用户确认...'
+            })
+            
+        except Exception as e:
+            self.logger.error(f"处理服务器文件失败: {str(e)}")
+            self.active_tasks[task_id].update({
+                'status': 'failed',
+                'error_message': str(e),
+                'last_update': time.time()
+            })
+            
+            self.socketio.emit('task_failed', {
+                'task_id': task_id,
+                'error_message': str(e)
+            })
+    
+    def run(self, host: str = None, port: int = None, debug: bool = None):
+        """启动Web应用"""
+        # 使用配置文件中的设置或传入的参数
+        web_config = self.config.get('web_interface', {})
+        host = host or web_config.get('host', '0.0.0.0')
+        port = port or web_config.get('port', 5000)
+        debug = debug if debug is not None else web_config.get('debug', False)
+        
+        self.logger.info(f"启动Web应用: http://{host}:{port}")
+        self.logger.info(f"目标数据库类型: {self.target_db_type.upper()}")
+        self.logger.info(f"通信模式: {self.comm_mode}")
+        
+        try:
+            self.socketio.run(
+                self.app,
+                host=host,
+                port=port,
+                debug=debug,
+                allow_unsafe_werkzeug=True  # 允许在开发环境中使用
+            )
+        except KeyboardInterrupt:
+            self.logger.info("Web应用已停止")
+        except Exception as e:
+            self.logger.error(f"Web应用启动失败: {str(e)}")
+            raise
+
+def create_app(config_path: str = "config.yaml"):
+    """创建Flask应用实例"""
+    return MigrationWebApp(config_path)
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Oracle到多数据库迁移工具Web界面')
+    parser.add_argument('--config', '-c', default='config.yaml', help='配置文件路径')
+    parser.add_argument('--host', default=None, help='监听地址')
+    parser.add_argument('--port', type=int, default=None, help='监听端口')
+    parser.add_argument('--debug', action='store_true', help='启用调试模式')
+    
+    args = parser.parse_args()
+    
+    try:
+        app = MigrationWebApp(args.config)
+        app.run(host=args.host, port=args.port, debug=args.debug)
+    except Exception as e:
+        print(f"启动失败: {e}")
+        sys.exit(1)

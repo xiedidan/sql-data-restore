@@ -108,6 +108,7 @@ body {
     gap: 1.5rem;
 }
 
+.database-section,
 .upload-section,
 .task-section {
     background: var(--surface-color);
@@ -116,6 +117,7 @@ body {
     box-shadow: var(--shadow);
 }
 
+.database-section h3,
 .upload-section h3,
 .task-section h3 {
     padding: 1rem 1.5rem;
@@ -125,8 +127,35 @@ body {
     color: var(--text-primary);
 }
 
+.database-section h3 i,
 .upload-section h3 i,
 .task-section h3 i {
+    margin-right: 0.5rem;
+    color: var(--primary-color);
+}
+
+/* 数据库选择区域 */
+.database-selector {
+    padding: 1rem 1.5rem;
+    display: flex;
+    gap: 1rem;
+}
+
+.database-info {
+    padding: 0 1.5rem 1rem;
+    border-top: 1px solid var(--border-color);
+    background-color: #f8fafc;
+}
+
+.database-info .info-text {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 0;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.database-info .info-text i {
     margin-right: 0.5rem;
     color: var(--primary-color);
 }

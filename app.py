@@ -50,7 +50,7 @@ def start_cli_mode():
     print("启动命令行模式...")
     
     try:
-        from main_controller import OracleDoriseMigrator
+        from main_controller import OracleToDbMigrator
         
         print("\n" + "="*60)
         print("🔧 Oracle到Doris迁移工具 命令行模式")
@@ -70,7 +70,7 @@ def start_cli_mode():
                 continue
             
             # 初始化迁移器
-            migrator = OracleDoriseMigrator("config.yaml")
+            migrator = OracleToDbMigrator("config.yaml")
             
             # 启用进度监控
             def progress_callback(message):
@@ -112,10 +112,10 @@ def run_quick_test():
         print("="*60)
         print(f"📄 测试文件: {users_file}")
         
-        from main_controller import OracleDoriseMigrator
+        from main_controller import OracleToDbMigrator
         
         # 初始化迁移器（自动确认模式）
-        migrator = OracleDoriseMigrator("config.yaml", {"enable_user_confirmation": False})
+        migrator = OracleToDbMigrator("config.yaml", {"enable_user_confirmation": False})
         
         # 启用进度监控
         def progress_callback(message):

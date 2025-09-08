@@ -17,6 +17,8 @@ try:
     from .core.sql_parser import SQLFileParser, TableSchema
     from .core.schema_inference import SchemaInferenceEngine, InferenceResult
     from .core.doris_connection import DorisConnection, ExecutionResult
+    from .core.postgresql_connection import PostgreSQLConnection
+    from .core.database_factory import DatabaseConnectionFactory
     from .core.parallel_importer import ParallelImporter, ImportResult
 except ImportError:
     # 添加项目根目录到路径
@@ -27,6 +29,8 @@ except ImportError:
     from core.sql_parser import SQLFileParser, TableSchema
     from core.schema_inference import SchemaInferenceEngine, InferenceResult
     from core.doris_connection import DorisConnection, ExecutionResult
+    from core.postgresql_connection import PostgreSQLConnection
+    from core.database_factory import DatabaseConnectionFactory
     from core.parallel_importer import ParallelImporter, ImportResult
 
 @dataclass
@@ -45,8 +49,8 @@ class MigrationTask:
     error_message: str = ""
     cancelled: bool = False  # 新增取消标志
 
-class OracleDoriseMigrator:
-    """Oracle到Doris迁移器主控制器"""
+class OracleToDbMigrator:
+    """Oracle到数据库迁移器主控制器（支持Doris和PostgreSQL）"""
     
     def __init__(self, config_path: str = "config.yaml", migration_config: Optional[Dict] = None):
         """
@@ -61,10 +65,16 @@ class OracleDoriseMigrator:
         if migration_config:
             self.config.setdefault('migration', {}).update(migration_config)
         
+        # 验证数据库配置
+        config_validation = DatabaseConnectionFactory.validate_config(self.config)
+        if not config_validation['valid']:
+            raise ValueError(f"数据库配置错误: {config_validation['message']}")
+        
         # 初始化核心组件
         self.sql_parser = SQLFileParser(self.config)
         self.schema_engine = SchemaInferenceEngine(self.config)
-        self.db_connection = DorisConnection(self.config)
+        self.db_connection = DatabaseConnectionFactory.create_connection(self.config)
+        self.target_db_type = config_validation['target_type']
         
         # 任务管理
         self.tasks = {}
@@ -82,7 +92,7 @@ class OracleDoriseMigrator:
         # 确保数据库存在
         self.db_connection.create_database_if_not_exists()
         
-        self.logger.info("Oracle到Doris迁移器初始化完成")
+        self.logger.info(f"Oracle到{self.target_db_type.upper()}迁移器初始化完成")
     
     def _load_config(self, config_path: str) -> Dict:
         """加载配置文件"""
@@ -98,10 +108,18 @@ class OracleDoriseMigrator:
         """获取默认配置"""
         return {
             'database': {
+                'target_type': 'doris',
                 'doris': {
                     'host': 'localhost',
                     'port': 9030,
                     'user': 'root',
+                    'password': '',
+                    'database': 'migration_db'
+                },
+                'postgresql': {
+                    'host': 'localhost',
+                    'port': 5432,
+                    'user': 'postgres',
                     'password': '',
                     'database': 'migration_db'
                 }

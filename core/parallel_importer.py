@@ -1,7 +1,7 @@
 """
 并行导入模块
 
-负责将大型SQL文件分块并行导入到Doris数据库
+负责将大型SQL文件分块并行导入到数据库（支持Doris和PostgreSQL）
 """
 
 import os
@@ -12,7 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass
 from queue import Queue
-from .doris_connection import DorisConnection, ExecutionResult
+from .database_factory import DatabaseConnectionFactory
+from .doris_connection import ExecutionResult
 
 @dataclass
 class ImportTask:
@@ -420,7 +421,7 @@ class ParallelImporter:
         """导入单个文件块（使用并行连接池）"""
         try:
             # 创建数据库连接（启用连接池）
-            db_conn = DorisConnection(self.config, use_connection_pool=self.enable_parallel_insert)
+            db_conn = DatabaseConnectionFactory.create_connection(self.config, use_connection_pool=self.enable_parallel_insert)
             
             # 批量执行SQL语句
             if task.sql_statements:
@@ -489,7 +490,7 @@ class ParallelImporter:
             try:
                 # 重新加载并导入失败的块
                 statements = self._load_chunk_statements(chunk_file)
-                db_conn = DorisConnection(self.config, use_connection_pool=self.enable_parallel_insert)
+                db_conn = DatabaseConnectionFactory.create_connection(self.config, use_connection_pool=self.enable_parallel_insert)
                 result = db_conn.execute_batch_insert(
                     statements, 
                     use_parallel=self.enable_parallel_insert

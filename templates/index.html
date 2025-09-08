@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Oracle到Doris数据迁移工具</title>
+    <title>Oracle数据迁移工具</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
@@ -12,7 +12,7 @@
         <!-- 头部 -->
         <header class="header">
             <div class="container">
-                <h1><i class="fas fa-database"></i> Oracle到Doris迁移工具</h1>
+                <h1><i class="fas fa-database"></i> Oracle数据迁移工具</h1>
                 <div class="connection-status">
                     <span id="connection-indicator" class="status-indicator offline">
                         <i class="fas fa-circle"></i> 离线
@@ -26,6 +26,31 @@
             <div class="container">
                 <!-- 左侧面板 -->
                 <aside class="sidebar">
+                    <!-- 数据库选择区域 -->
+                    <div class="database-section">
+                        <h3><i class="fas fa-database"></i> 目标数据库</h3>
+                        <div class="database-selector">
+                            <label class="radio-option">
+                                <input type="radio" name="target-database" value="doris" checked>
+                                <span class="radio-label">
+                                    <i class="fas fa-server"></i> Apache Doris
+                                </span>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="target-database" value="postgresql">
+                                <span class="radio-label">
+                                    <i class="fas fa-elephant"></i> PostgreSQL
+                                </span>
+                            </label>
+                        </div>
+                        <div class="database-info" id="database-info">
+                            <div class="info-text">
+                                <i class="fas fa-info-circle"></i>
+                                <span id="database-description">选择数据迁移的目标数据库类型</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 文件上传区域 -->
                     <div class="upload-section">
                         <h3><i class="fas fa-upload"></i> 文件输入</h3>

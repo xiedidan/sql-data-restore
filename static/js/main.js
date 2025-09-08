@@ -351,6 +351,13 @@ class MigrationApp {
     
     // 事件监听器
     initEventListeners() {
+        // 数据库选择
+        document.querySelectorAll('input[name="target-database"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                this.handleDatabaseSelection(e.target.value);
+            });
+        });
+        
         // DDL操作按钮
         document.getElementById('validate-ddl').addEventListener('click', () => {
             this.validateDDL();
@@ -446,6 +453,7 @@ class MigrationApp {
         
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('target_database', this.getSelectedDatabase());
         
         this.log(`开始上传文件: ${file.name}`, 'info');
         
@@ -628,7 +636,10 @@ class MigrationApp {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ file_path: this.currentValidatedFile.file_path })
+                body: JSON.stringify({ 
+                    file_path: this.currentValidatedFile.file_path,
+                    target_database: this.getSelectedDatabase()
+                })
             });
             
             const result = await response.json();
@@ -1203,6 +1214,36 @@ class MigrationApp {
         document.getElementById('modal-title').textContent = title;
         document.getElementById('modal-message').textContent = message;
         document.getElementById('status-modal').style.display = 'flex';
+    }
+    
+    // 处理数据库选择
+    handleDatabaseSelection(targetDatabase) {
+        this.log(`选择目标数据库: ${targetDatabase.toUpperCase()}`, 'info');
+        
+        // 更新数据库描述信息
+        const descriptions = {
+            'doris': 'Apache Doris - 高性能分析型数据库，适合OLAP场景',
+            'postgresql': 'PostgreSQL - 功能强大的开源关系型数据库'
+        };
+        
+        const descriptionElement = document.getElementById('database-description');
+        if (descriptionElement) {
+            descriptionElement.textContent = descriptions[targetDatabase] || '选择数据迁移的目标数据库类型';
+        }
+        
+        // 存储当前选择的数据库类型
+        this.selectedDatabase = targetDatabase;
+        
+        // 如果有正在进行的任务，提示用户
+        if (this.currentTask && this.currentTask.status !== 'completed' && this.currentTask.status !== 'failed') {
+            this.showModal('提示', '更改数据库类型将在下次迁移时生效', 'info');
+        }
+    }
+    
+    // 获取当前选择的数据库类型
+    getSelectedDatabase() {
+        const selectedRadio = document.querySelector('input[name="target-database"]:checked');
+        return selectedRadio ? selectedRadio.value : 'doris';
     }
 }
 

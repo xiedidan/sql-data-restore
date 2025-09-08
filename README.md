@@ -1,13 +1,14 @@
-# Oracle到Doris数据迁移工具
+# Oracle数据迁移工具
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-一个功能完整的Oracle数据库到Apache Doris数据库的迁移工具，集成AI智能推断、Web界面交互和高性能并行导入功能，为企业级数据迁移提供完整解决方案。
+一个功能完整的Oracle数据库迁移工具，支持向**Apache Doris**和**PostgreSQL**数据库迁移，集成AI智能推断、Web界面交互和高性能并行导入功能，为企业级数据迁移提供完整解决方案。
 
 ## ✨ 核心特性
 
-- 🤖 **AI智能推断**: 使用DeepSeek R1 API自动分析Oracle SQL文件，生成适配Doris的DDL语句
+- 🎯 **多数据库支持**: 支持向Apache Doris和PostgreSQL数据库迁移，可灵活选择目标数据库
+- 🤖 **AI智能推断**: 使用DeepSeek R1 API自动分析Oracle SQL文件，生成适配目标数据库的DDL语句
 - 🌐 **Web界面**: 现代化响应式Web界面，支持拖拽上传、实时监控和在线DDL编辑
 - ⚡ **并行导入**: 大文件分块并行处理，支持50GB+数据量高效导入
 - 🔄 **实时监控**: WebSocket实时通信，提供详细进度反馈和错误处理
@@ -25,31 +26,37 @@ graph TB
     end
     
     subgraph "控制层"
-        Controller[主控制器<br/>OracleDoriseMigrator]
+        Controller[主控制器<br/>OracleToDbMigrator]
     end
     
     subgraph "核心模块"
         Parser[SQL解析器<br/>SQLFileParser]
         AI[AI推断引擎<br/>SchemaInferenceEngine] 
-        DB[数据库连接器<br/>DorisConnection]
+        Factory[数据库工厂<br/>DatabaseConnectionFactory]
+        DB1[Doris连接器<br/>DorisConnection]
+        DB2[PostgreSQL连接器<br/>PostgreSQLConnection]
         Importer[并行导入器<br/>ParallelImporter]
     end
     
     subgraph "外部服务"
         DeepSeek[DeepSeek R1 API]
         Doris[Apache Doris]
+        PostgreSQL[PostgreSQL]
     end
     
     Web --> Controller
     CLI --> Controller
     Controller --> Parser
     Controller --> AI
-    Controller --> DB
+    Controller --> Factory
+    Factory --> DB1
+    Factory --> DB2
     Controller --> Importer
-    
     AI --> DeepSeek
-    DB --> Doris
-    Importer --> Doris
+    DB1 --> Doris
+    DB2 --> PostgreSQL
+    Importer --> DB1
+    Importer --> DB2
 ```
 
 ## 📁 项目结构
@@ -59,7 +66,9 @@ sql-data-restore/
 ├── core/                    # 核心业务模块
 │   ├── sql_parser.py       # SQL文件解析器
 │   ├── schema_inference.py # AI推断引擎
+│   ├── database_factory.py # 数据库连接工厂
 │   ├── doris_connection.py # Doris数据库连接器
+│   ├── postgresql_connection.py # PostgreSQL数据库连接器
 │   └── parallel_importer.py # 并行数据导入器
 ├── web/                     # Web界面模块
 │   └── app.py              # Flask + SocketIO应用
@@ -130,12 +139,21 @@ cp config.yaml.example config.yaml
 **主要配置项**：
 
 ```yaml
-# 数据库配置
+# 多数据库配置
 database:
+  target_type: "postgresql"    # 选择目标数据库: "doris" 或 "postgresql"
+  
   doris:
     host: "your-doris-host"     # Doris服务器地址
     port: 9030                  # FE查询端口
     user: "root"                # 用户名
+    password: "your-password"   # 密码
+    database: "migration_db"    # 目标数据库
+  
+  postgresql:
+    host: "your-pg-host"        # PostgreSQL服务器地址
+    port: 5432                  # 数据库端口
+    user: "postgres"            # 用户名
     password: "your-password"   # 密码
     database: "migration_db"    # 目标数据库
 
@@ -150,6 +168,8 @@ migration:
   max_workers: 8               # 并发线程数
   chunk_size_mb: 30           # 文件块大小（MB）
 ```
+
+> 💡 **提示**: 您可以同时配置两种数据库，然后通过 `target_type` 或Web界面选择实际使用的目标数据库。
 
 ### 3. 环境检查
 
@@ -317,10 +337,10 @@ start-daemon.bat
 ### 编程接口使用
 
 ```python
-from main_controller import OracleDoriseMigrator
+from main_controller import OracleToDbMigrator
 
 # 初始化迁移器
-migrator = OracleDoriseMigrator("config.yaml")
+migrator = OracleToDbMigrator("config.yaml")
 
 # 迁移单个表
 success = migrator.migrate_single_table("path/to/table.sql")
@@ -358,10 +378,16 @@ python tests/test_migration.py --mode multiple
 
 ## ⚙️ 配置详解
 
-### 数据库配置
+### 多数据库支持配置
+
+本工具支持向**Apache Doris**和**PostgreSQL**两种数据库迁移，可通过配置文件或Web界面选择目标数据库类型。
 
 ```yaml
 database:
+  # 目标数据库类型选择
+  target_type: "postgresql"    # 可选值: "doris", "postgresql"
+  
+  # Apache Doris配置
   doris:
     host: "localhost"          # Doris服务器地址
     port: 9030                 # FE查询端口
@@ -369,7 +395,19 @@ database:
     password: ""               # 密码
     database: "migration_db"   # 目标数据库
     charset: "utf8mb4"         # 字符集
+  
+  # PostgreSQL配置
+  postgresql:
+    host: "localhost"          # PostgreSQL服务器地址
+    port: 5432                 # 数据库端口
+    user: "postgres"           # 用户名
+    password: ""               # 密码
+    database: "migration_db"   # 目标数据库
 ```
+
+**数据库选择说明**：
+- **Apache Doris**: 适合大数据分析、OLAP查询场景
+- **PostgreSQL**: 适合事务性应用、复杂查询场景
 
 ### AI推断配置
 
@@ -586,7 +624,7 @@ server {
 ### 主控制器 API
 
 ```python
-class OracleDoriseMigrator:
+class OracleToDbMigrator:
     def __init__(self, config_path: str, migration_config: Optional[Dict] = None)
     
     # 完整迁移方法
@@ -671,7 +709,7 @@ custom_config = {
     "chunk_size_mb": 50
 }
 
-migrator = OracleDoriseMigrator("config.yaml", custom_config)
+migrator = OracleToDbMigrator("config.yaml", custom_config)
 
 # 监控回调
 def progress_callback(message):
