@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "==================================="
-echo "Oracle到Doris数据迁移工具"
+echo "Oracle到多数据库迁移工具"
 echo "==================================="
 echo
 
@@ -13,21 +13,16 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 检查是否在虚拟环境中
-if [[ "$VIRTUAL_ENV" != "" ]]; then
-    echo -e "${GREEN}检测到虚拟环境: $VIRTUAL_ENV${NC}"
-    PYTHON_CMD="python"
-else
-    # 检查Python是否安装
-    if ! command -v python3 &> /dev/null; then
-        echo -e "${RED}错误：Python3未安装或不在PATH中${NC}"
-        echo "请安装Python 3.8+"
-        exit 1
-    fi
-    PYTHON_CMD="python3"
+if [[ "$VIRTUAL_ENV" == "" ]]; then
+    echo -e "${RED}错误：请先激活虚拟环境${NC}"
+    echo "运行以下命令激活虚拟环境："
+    echo "source venv/bin/activate"
+    echo "然后重新运行此脚本"
+    exit 1
 fi
 
-# 显示Python版本
-echo -e "${BLUE}Python版本：${NC}$($PYTHON_CMD --version)"
+echo -e "${GREEN}检测到虚拟环境: $VIRTUAL_ENV${NC}"
+echo -e "${BLUE}Python版本：${NC}$(python --version)"
 
 # 检查配置文件
 if [ ! -f "config.yaml" ]; then
@@ -45,26 +40,6 @@ if [ ! -f "config.yaml" ]; then
     fi
 fi
 
-# 检查和处理虚拟环境
-if [[ "$VIRTUAL_ENV" == "" ]]; then
-    # 不在虚拟环境中，检查是否存在venv目录
-    if [ ! -d "venv" ]; then
-        echo -e "${BLUE}创建Python虚拟环境...${NC}"
-        $PYTHON_CMD -m venv venv
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}错误：创建虚拟环境失败${NC}"
-            exit 1
-        fi
-    fi
-    
-    # 激活虚拟环境
-    echo -e "${BLUE}激活虚拟环境...${NC}"
-    source venv/bin/activate
-    PYTHON_CMD="python"
-else
-    echo -e "${GREEN}已在虚拟环境中，跳过激活步骤${NC}"
-fi
-
 # 安装依赖
 echo -e "${BLUE}检查和安装依赖库...${NC}"
 pip install -r requirements.txt --quiet
@@ -75,7 +50,7 @@ fi
 
 # 运行环境检查
 echo -e "${BLUE}运行环境检查...${NC}"
-$PYTHON_CMD app.py --mode check
+python app.py --mode check
 if [ $? -ne 0 ]; then
     echo -e "${YELLOW}环境检查发现问题，请根据提示修复${NC}"
     exit 1
@@ -91,9 +66,11 @@ while true; do
     echo "1. Web界面模式 (推荐)"
     echo "2. 命令行模式"
     echo "3. 快速测试"
-    echo "4. 退出"
+    echo "4. 系统功能测试"
+    echo "5. 数据库选择测试"
+    echo "6. 退出"
     echo
-    read -p "请输入选择 (1-4): " choice
+    read -p "请输入选择 (1-6): " choice
 
     case $choice in
         1)
@@ -101,23 +78,37 @@ while true; do
             echo -e "${BLUE}启动Web界面...${NC}"
             echo -e "${GREEN}请在浏览器中访问: http://localhost:5000${NC}"
             echo "按 Ctrl+C 停止服务"
-            $PYTHON_CMD app.py --mode web
+            python app.py --mode web
             break
             ;;
         2)
             echo
             echo -e "${BLUE}启动命令行模式...${NC}"
-            $PYTHON_CMD app.py --mode cli
+            python app.py --mode cli
             break
             ;;
         3)
             echo
             echo -e "${BLUE}运行快速测试...${NC}"
-            $PYTHON_CMD app.py --mode test
+            python app.py --mode test
             read -p "按回车键继续..."
             continue
             ;;
         4)
+            echo
+            echo -e "${BLUE}运行系统功能测试...${NC}"
+            python test_system.py
+            read -p "按回车键继续..."
+            continue
+            ;;
+        5)
+            echo
+            echo -e "${BLUE}运行数据库选择测试...${NC}"
+            python test_database_selection.py
+            read -p "按回车键继续..."
+            continue
+            ;;
+        6)
             echo
             echo -e "${GREEN}感谢使用！${NC}"
             exit 0

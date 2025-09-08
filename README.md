@@ -188,13 +188,40 @@ python app.py --mode check
 
 ### 4. 启动应用
 
-#### Web界面模式（推荐）
+#### 自动启动脚本（推荐）
+
+**Linux/macOS:**
+```bash
+# 使用启动脚本（自动处理虚拟环境）
+./start.sh
+
+# 如果已在虚拟环境中，使用专用脚本
+./start-venv.sh
+```
+
+**Windows:**
+```bash
+# 使用Windows启动脚本
+start.bat
+```
+
+#### 手动启动（虚拟环境中）
+
+如果您已经激活了虚拟环境：
 
 ```bash
+# 简化启动器（推荐）
+python run_web.py
+
+# 或直接启动Web界面
 python app.py --mode web
 ```
 
 访问 `http://localhost:5000` 使用Web界面。
+
+#### 虚拟环境问题解决
+
+如果遇到虚拟环境相关问题，请参考 `VIRTUAL_ENV_GUIDE.md` 获取详细解决方案。
 
 #### 后台启动模式
 
